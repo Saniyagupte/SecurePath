@@ -254,7 +254,15 @@ class SecurityScanner:
             shutil.rmtree(target, ignore_errors=True)
 
         try:
-            Repo.clone_from(repo_url, str(target), depth=1)
+            # Optimize git clone for 500MB environments
+            Repo.clone_from(
+                repo_url, 
+                str(target), 
+                depth=1, 
+                single_branch=True, 
+                no_tags=True,
+                shallow_submodules=True
+            )
             repo = Repo(str(target))
             self.commit_sha = repo.head.commit.hexsha
             update_scan(self.scan_id, commit_sha=self.commit_sha, status="scanning")
@@ -284,6 +292,9 @@ class SecurityScanner:
                 "--config=p/nodejs",
                 "--config=p/owasp-top-ten",
                 "--config=p/secrets",
+                "-j", "1",               # Run strictly single-threaded to prevent OOM
+                "--max-memory=150",      # Abort file parsing if it exceeds 150MB
+                "--timeout=30",          # Timeout on overly complex files
                 "--json",
                 "--quiet",
                 str(self.repo_path),
@@ -291,6 +302,9 @@ class SecurityScanner:
             [
                 "semgrep",
                 "--config=p/javascript",
+                "-j", "1",
+                "--max-memory=150",
+                "--timeout=30",
                 "--json",
                 "--quiet",
                 str(self.repo_path),

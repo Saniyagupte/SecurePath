@@ -22,6 +22,8 @@ from db import (
     update_finding,
     update_scan,
     update_session_on_complete,
+    save_pdf_to_db,
+    get_pdf_from_db,
     REPORTS_DIR,
 )
 from enricher import EXAIEnricher
@@ -127,8 +129,9 @@ def download_report(scan_id: str):
         return jsonify({"error": "Scan not found"}), 404
     if scan.get("status") != "complete":
         return jsonify({"error": "Report not ready"}), 400
-    report_path = scan.get("report_path")
-    if not report_path or not os.path.exists(report_path):
+
+    pdf_bytes = get_pdf_from_db(scan_id)
+    if not pdf_bytes:
         return jsonify({"error": "Report file missing"}), 404
 
     # Track PDF download in analytics (fire-and-forget)
@@ -136,7 +139,13 @@ def download_report(scan_id: str):
 
     repo_name = str(scan.get("repo_name") or "report").replace("/", "-")
     filename = f"securepath-{repo_name}.pdf"
-    return send_file(report_path, as_attachment=True, download_name=filename)
+    import io
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @app.get("/api/scans/history")
@@ -336,12 +345,20 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         generator = AuditReportGenerator()
         pdf_path = generator.generate(scan or {"id": scan_id}, final_findings)
 
+        # Cache it inside the database perfectly for ephemeral environments
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+            save_pdf_to_db(scan_id, pdf_bytes)
+        except Exception as e:
+            print(f"[SecurePath] Failed to save PDF to DB for {scan_id}: {e}")
+
         update_scan(
             scan_id,
             status="complete",
             progress=100,
             current_step="Complete",
-            report_path=pdf_path,
+            report_path="db://scan_reports",  # pseudo path now
             completed_at=_now_iso(),
         )
         # Update analytics session with final counts asynchronously
