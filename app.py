@@ -118,6 +118,7 @@ def scan_status(scan_id: str):
             "risk_score": int(scan.get("risk_score") or 0),
             "findings": enriched,
             "total_findings": int(scan.get("findings_count") or 0),
+            "commit_sha": scan.get("commit_sha") or "",
         }
     )
 

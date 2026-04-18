@@ -672,7 +672,8 @@ class AuditReportGenerator:
             ])
 
         header = ["#", "Severity", "Category", "File", "Line", "Title", "SOC2 Control", "Status"]
-        col_widths = [18, 52, 56, 110, 28, 130, 78, 88]
+        # Reduce column widths so total is < 519 (PAGE_W - 2 * MARGIN_X)
+        col_widths = [18, 48, 54, 100, 26, 116, 75, 82]
 
         page_num = page_offset
         for chunk_start in range(0, max(1, len(rows_all)), MAX_ROWS_PER_PAGE):
@@ -707,8 +708,8 @@ class AuditReportGenerator:
                 style.add("TEXTCOLOR", (7, i), (7, i), colors.HexColor("#b91c1c"))
                 style.add("FONTNAME", (7, i), (7, i), "Helvetica-Bold")
             table.setStyle(style)
-            table.wrapOn(c, self.PAGE_W - (2 * self.MARGIN_X), USABLE_H)
-            table.drawOn(c, self.MARGIN_X, 48)
+            w, h = table.wrapOn(c, self.PAGE_W - (2 * self.MARGIN_X), USABLE_H)
+            table.drawOn(c, self.MARGIN_X, self.PAGE_H - 80 - h)
             self._draw_footer(c, 2 + self.finding_counter + page_num, dark=False)
             if chunk_start + MAX_ROWS_PER_PAGE < len(rows_all):
                 c.showPage()
