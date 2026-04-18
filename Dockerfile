@@ -37,6 +37,6 @@ ENV DATA_DIR=/data
 # PORT is injected automatically by Railway and Render
 EXPOSE 8000
 
-# Use gunicorn with 2 workers (keep low for free tier RAM limits).
-# init_db() is called inside app.py __main__, so we call it via a startup script.
-CMD ["sh", "-c", "python -c 'from db import init_db; init_db()' && gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 300 --access-logfile - app:app"]
+# Use gunicorn with 1 worker and threads to aggressively minimize RAM for the 500MB free tier.
+# init_db() is called via a startup script.
+CMD ["sh", "-c", "python -c 'from db import init_db; init_db()' && gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 300 --access-logfile - app:app"]

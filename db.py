@@ -1,85 +1,144 @@
+"""
+SecurePath database layer.
+
+Backend is chosen automatically at startup:
+  - DATABASE_URL env var set  →  PostgreSQL  (production on Render / Neon / Supabase)
+  - DATABASE_URL not set      →  SQLite       (local development, no setup needed)
+
+All public functions have identical signatures regardless of backend.
+"""
+import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
-import json
 
 
 # ---------------------------------------------------------------------------
-# Database path — reads DATA_DIR env var so Railway/Render persistent volumes
-# work automatically.  Falls back to the project root when running locally.
+# Path config — used only when SQLite backend is active
 # ---------------------------------------------------------------------------
-_DATA_DIR = os.getenv("DATA_DIR", "")  # e.g. /data on Railway
+_DATA_DIR = os.getenv("DATA_DIR", "")
 if _DATA_DIR:
     os.makedirs(_DATA_DIR, exist_ok=True)
-DB_PATH = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else "securepath.db"
 
-# Reports directory: also lives on the persistent volume in production
+DB_PATH     = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else "securepath.db"
 REPORTS_DIR = os.path.join(_DATA_DIR, "reports") if _DATA_DIR else "reports"
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
-SCAN_FIELDS = {
-    "repo_url",
-    "repo_name",
-    "commit_sha",
-    "status",
-    "progress",
-    "current_step",
-    "findings_count",
-    "critical_count",
-    "high_count",
-    "medium_count",
-    "low_count",
-    "risk_score",
-    "findings_hash",
-    "report_path",
-    "error_message",
-    "created_at",
-    "completed_at",
-}
+# ---------------------------------------------------------------------------
+# Backend detection
+# ---------------------------------------------------------------------------
+DATABASE_URL  = os.getenv("DATABASE_URL", "")
+_USE_POSTGRES = bool(DATABASE_URL)
 
-FINDING_FIELDS = {
-    "scan_id",
-    "pass_name",
-    "file_path",
-    "line_start",
-    "line_end",
-    "severity",
-    "category",
-    "raw_title",
-    "code_snippet",
-    "cve_id",
-    "cwe_id",
-    "owasp_category",
-    "npm_package",
-    "plain_english",
-    "business_risk",
-    "exploit_scenario",
-    "remediation_json",
-    "soc2_controls",
-    "confidence_score",
-    "false_positive_risk",
-    "false_positive_reason",
-    "enrichment_status",
-    "created_at",
-}
+if _USE_POSTGRES:
+    try:
+        import psycopg2
+        import psycopg2.extras
+        print("[SecurePath] DB backend: PostgreSQL")
+    except ImportError:
+        _USE_POSTGRES = False
+        print("[SecurePath] psycopg2 not installed — falling back to SQLite")
+else:
+    print(f"[SecurePath] DB backend: SQLite -> {DB_PATH}")
 
 
+# ---------------------------------------------------------------------------
+# SQL adapter — converts SQLite syntax → PostgreSQL where needed
+# ---------------------------------------------------------------------------
+_NAMED_RE = re.compile(r":(\w+)")
+
+
+def _adapt(sql: str) -> str:
+    """Convert SQLite placeholders to PostgreSQL style (no-op for SQLite)."""
+    if not _USE_POSTGRES:
+        return sql
+    sql = _NAMED_RE.sub(r"%(\1)s", sql)  # :foo  →  %(foo)s
+    sql = sql.replace("?", "%s")          # ?     →  %s
+    return sql
+
+
+# ---------------------------------------------------------------------------
+# Unified connection wrapper
+# Gives both backends the same interface so all query code is identical.
+# ---------------------------------------------------------------------------
+class _Conn:
+    """
+    Wraps sqlite3 / psycopg2 with a common interface.
+
+        with _get_conn() as conn:
+            conn.execute(SQL, params)
+            conn.execute(SQL, params).fetchone()
+            conn.execute(SQL, params).fetchall()
+    """
+
+    def __init__(self) -> None:
+        if _USE_POSTGRES:
+            self._conn = psycopg2.connect(
+                DATABASE_URL,
+                cursor_factory=psycopg2.extras.RealDictCursor,
+            )
+            self._conn.autocommit = False
+        else:
+            self._conn = sqlite3.connect(DB_PATH)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def execute(self, sql: str, params=None):
+        if _USE_POSTGRES:
+            cur = self._conn.cursor()
+            cur.execute(_adapt(sql), params)
+            return cur
+        # SQLite: connection.execute() returns a cursor directly
+        if params is None:
+            return self._conn.execute(sql)
+        return self._conn.execute(sql, params)
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def __enter__(self) -> "_Conn":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def _get_conn() -> _Conn:
+    return _Conn()
+
+
+# ---------------------------------------------------------------------------
+# Row → dict  (works for both sqlite3.Row and psycopg2 RealDictRow)
+# ---------------------------------------------------------------------------
+def _row_to_dict(row: Any) -> "dict[str, Any] | None":
+    if row is None:
+        return None
+    if isinstance(row, sqlite3.Row):
+        return {k: row[k] for k in row.keys()}
+    return dict(row)  # psycopg2 RealDictRow is already dict-like
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def _normalize_repo_name(repo_url: str) -> str | None:
+def _normalize_repo_name(repo_url: str) -> "str | None":
     try:
         parsed = urlparse(repo_url.strip())
         path = (parsed.path or "").strip("/")
@@ -98,69 +157,88 @@ def _normalize_repo_name(repo_url: str) -> str | None:
 
 
 def severity_weight(severity: str) -> int:
-    weights = {
-        "critical": 4,
-        "high": 3,
-        "medium": 2,
-        "low": 1,
-        "info": 0,
-    }
-    return weights.get((severity or "").lower(), 0)
+    return {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}.get(
+        (severity or "").lower(), 0
+    )
 
 
+# ---------------------------------------------------------------------------
+# Allowed field sets (prevent SQL injection via kwargs)
+# ---------------------------------------------------------------------------
+SCAN_FIELDS = {
+    "repo_url", "repo_name", "commit_sha", "status", "progress",
+    "current_step", "findings_count", "critical_count", "high_count",
+    "medium_count", "low_count", "risk_score", "findings_hash",
+    "report_path", "error_message", "created_at", "completed_at",
+}
+
+FINDING_FIELDS = {
+    "scan_id", "pass_name", "file_path", "line_start", "line_end",
+    "severity", "category", "raw_title", "code_snippet", "cve_id",
+    "cwe_id", "owasp_category", "npm_package", "plain_english",
+    "business_risk", "exploit_scenario", "remediation_json",
+    "soc2_controls", "confidence_score", "false_positive_risk",
+    "false_positive_reason", "enrichment_status", "created_at",
+}
+
+
+# ---------------------------------------------------------------------------
+# Schema init
+# Both SQLite and PostgreSQL accept this SQL syntax identically.
+# ---------------------------------------------------------------------------
 def init_db() -> None:
     with _get_conn() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scans (
-              id TEXT PRIMARY KEY,
-              repo_url TEXT NOT NULL,
-              repo_name TEXT,
-              commit_sha TEXT,
-              status TEXT DEFAULT 'queued',
-              progress INTEGER DEFAULT 0,
-              current_step TEXT,
-              findings_count INTEGER DEFAULT 0,
-              critical_count INTEGER DEFAULT 0,
-              high_count INTEGER DEFAULT 0,
-              medium_count INTEGER DEFAULT 0,
-              low_count INTEGER DEFAULT 0,
-              risk_score INTEGER DEFAULT 0,
-              findings_hash TEXT,
-              report_path TEXT,
-              error_message TEXT,
-              created_at TEXT,
-              completed_at TEXT
+              id            TEXT PRIMARY KEY,
+              repo_url      TEXT NOT NULL,
+              repo_name     TEXT,
+              commit_sha    TEXT,
+              status        TEXT DEFAULT 'queued',
+              progress      INTEGER DEFAULT 0,
+              current_step  TEXT,
+              findings_count  INTEGER DEFAULT 0,
+              critical_count  INTEGER DEFAULT 0,
+              high_count      INTEGER DEFAULT 0,
+              medium_count    INTEGER DEFAULT 0,
+              low_count       INTEGER DEFAULT 0,
+              risk_score      INTEGER DEFAULT 0,
+              findings_hash   TEXT,
+              report_path     TEXT,
+              error_message   TEXT,
+              created_at      TEXT,
+              completed_at    TEXT
             )
             """
         )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS findings (
-              id TEXT PRIMARY KEY,
-              scan_id TEXT NOT NULL,
-              pass_name TEXT,
-              file_path TEXT,
-              line_start INTEGER,
-              line_end INTEGER,
-              severity TEXT,
-              category TEXT,
-              raw_title TEXT,
-              code_snippet TEXT,
-              cve_id TEXT,
-              cwe_id TEXT,
-              owasp_category TEXT,
-              npm_package TEXT,
-              plain_english TEXT,
-              business_risk TEXT,
-              exploit_scenario TEXT,
-              remediation_json TEXT,
-              soc2_controls TEXT,
-              confidence_score INTEGER,
-              false_positive_risk TEXT,
+              id                   TEXT PRIMARY KEY,
+              scan_id              TEXT NOT NULL,
+              pass_name            TEXT,
+              file_path            TEXT,
+              line_start           INTEGER,
+              line_end             INTEGER,
+              severity             TEXT,
+              category             TEXT,
+              raw_title            TEXT,
+              code_snippet         TEXT,
+              cve_id               TEXT,
+              cwe_id               TEXT,
+              owasp_category       TEXT,
+              npm_package          TEXT,
+              plain_english        TEXT,
+              business_risk        TEXT,
+              exploit_scenario     TEXT,
+              remediation_json     TEXT,
+              soc2_controls        TEXT,
+              confidence_score     INTEGER,
+              false_positive_risk  TEXT,
               false_positive_reason TEXT,
-              enrichment_status TEXT DEFAULT 'pending',
-              created_at TEXT,
+              enrichment_status    TEXT DEFAULT 'pending',
+              created_at           TEXT,
               FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
             )
             """
@@ -171,31 +249,30 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity)"
         )
-        # Analytics table — captures every scan session with zero user friction
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scan_sessions (
-                session_id     TEXT PRIMARY KEY,
-                scan_id        TEXT,
-                repo_url       TEXT,
-                repo_name      TEXT,
-                ip_address     TEXT,
-                country        TEXT,
-                city           TEXT,
-                user_agent     TEXT,
-                referrer       TEXT,
-                started_at     TEXT,
-                completed_at   TEXT,
-                scan_completed INTEGER DEFAULT 0,
-                findings_count INTEGER DEFAULT 0,
-                critical_count INTEGER DEFAULT 0,
-                high_count     INTEGER DEFAULT 0,
-                medium_count   INTEGER DEFAULT 0,
-                low_count      INTEGER DEFAULT 0,
-                risk_score     INTEGER DEFAULT 0,
-                pdf_downloaded INTEGER DEFAULT 0,
-                time_to_complete_seconds INTEGER DEFAULT 0,
-                FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE SET NULL
+              session_id               TEXT PRIMARY KEY,
+              scan_id                  TEXT,
+              repo_url                 TEXT,
+              repo_name                TEXT,
+              ip_address               TEXT,
+              country                  TEXT,
+              city                     TEXT,
+              user_agent               TEXT,
+              referrer                 TEXT,
+              started_at               TEXT,
+              completed_at             TEXT,
+              scan_completed           INTEGER DEFAULT 0,
+              findings_count           INTEGER DEFAULT 0,
+              critical_count           INTEGER DEFAULT 0,
+              high_count               INTEGER DEFAULT 0,
+              medium_count             INTEGER DEFAULT 0,
+              low_count                INTEGER DEFAULT 0,
+              risk_score               INTEGER DEFAULT 0,
+              pdf_downloaded           INTEGER DEFAULT 0,
+              time_to_complete_seconds INTEGER DEFAULT 0,
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE SET NULL
             )
             """
         )
@@ -205,16 +282,19 @@ def init_db() -> None:
         conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Scans CRUD
+# ---------------------------------------------------------------------------
 def create_scan(repo_url: str) -> str:
-    scan_id = str(uuid.uuid4())
+    scan_id    = str(uuid.uuid4())
     created_at = _utc_now_iso()
-    repo_name = _normalize_repo_name(repo_url)
+    repo_name  = _normalize_repo_name(repo_url)
     with _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO scans (
-              id, repo_url, repo_name, status, progress, created_at
-            ) VALUES (?, ?, ?, 'queued', 0, ?)
+            INSERT INTO scans
+              (id, repo_url, repo_name, status, progress, created_at)
+            VALUES (?, ?, ?, 'queued', 0, ?)
             """,
             (scan_id, repo_url, repo_name, created_at),
         )
@@ -226,80 +306,80 @@ def update_scan(scan_id: str, **kwargs: Any) -> None:
     updates = {k: v for k, v in kwargs.items() if k in SCAN_FIELDS}
     if not updates:
         return
-
-    columns = ", ".join([f"{k} = ?" for k in updates.keys()])
-    values = list(updates.values())
-    values.append(scan_id)
-
+    placeholders = ", ".join([f"{k} = ?" for k in updates.keys()])
+    values = list(updates.values()) + [scan_id]
     with _get_conn() as conn:
-        conn.execute(f"UPDATE scans SET {columns} WHERE id = ?", values)
+        conn.execute(f"UPDATE scans SET {placeholders} WHERE id = ?", values)
         conn.commit()
 
 
-def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    return {k: row[k] for k in row.keys()}
-
-
-def get_scan(scan_id: str) -> dict[str, Any] | None:
+def get_scan(scan_id: str) -> "dict[str, Any] | None":
     with _get_conn() as conn:
-        row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM scans WHERE id = ?", (scan_id,)
+        ).fetchone()
         return _row_to_dict(row)
 
 
-def get_all_scans() -> list[dict[str, Any]]:
+def get_all_scans() -> "list[dict[str, Any]]":
     with _get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM scans ORDER BY datetime(created_at) DESC, id DESC"
+            "SELECT * FROM scans ORDER BY created_at DESC, id DESC"
         ).fetchall()
         return [_row_to_dict(r) for r in rows if r is not None]
 
 
-def insert_finding(scan_id: str, finding_dict: dict[str, Any]) -> str:
+# ---------------------------------------------------------------------------
+# Findings CRUD
+# ---------------------------------------------------------------------------
+def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
     finding_id = finding_dict.get("id") or str(uuid.uuid4())
     created_at = finding_dict.get("created_at") or _utc_now_iso()
 
     values = {
-        "id": finding_id,
-        "scan_id": scan_id,
-        "pass_name": finding_dict.get("pass_name"),
-        "file_path": finding_dict.get("file_path"),
-        "line_start": finding_dict.get("line_start"),
-        "line_end": finding_dict.get("line_end"),
-        "severity": finding_dict.get("severity"),
-        "category": finding_dict.get("category"),
-        "raw_title": finding_dict.get("raw_title"),
-        "code_snippet": (finding_dict.get("code_snippet") or "")[:300],
-        "cve_id": finding_dict.get("cve_id"),
-        "cwe_id": finding_dict.get("cwe_id"),
-        "owasp_category": finding_dict.get("owasp_category"),
-        "npm_package": finding_dict.get("npm_package"),
-        "plain_english": finding_dict.get("plain_english"),
-        "business_risk": finding_dict.get("business_risk"),
-        "exploit_scenario": finding_dict.get("exploit_scenario"),
-        "remediation_json": finding_dict.get("remediation_json"),
-        "soc2_controls": finding_dict.get("soc2_controls"),
-        "confidence_score": finding_dict.get("confidence_score"),
-        "false_positive_risk": finding_dict.get("false_positive_risk"),
-        "false_positive_reason": finding_dict.get("false_positive_reason"),
-        "enrichment_status": finding_dict.get("enrichment_status", "pending"),
-        "created_at": created_at,
+        "id":                   finding_id,
+        "scan_id":              scan_id,
+        "pass_name":            finding_dict.get("pass_name"),
+        "file_path":            finding_dict.get("file_path"),
+        "line_start":           finding_dict.get("line_start"),
+        "line_end":             finding_dict.get("line_end"),
+        "severity":             finding_dict.get("severity"),
+        "category":             finding_dict.get("category"),
+        "raw_title":            finding_dict.get("raw_title"),
+        "code_snippet":         (finding_dict.get("code_snippet") or "")[:300],
+        "cve_id":               finding_dict.get("cve_id"),
+        "cwe_id":               finding_dict.get("cwe_id"),
+        "owasp_category":       finding_dict.get("owasp_category"),
+        "npm_package":          finding_dict.get("npm_package"),
+        "plain_english":        finding_dict.get("plain_english"),
+        "business_risk":        finding_dict.get("business_risk"),
+        "exploit_scenario":     finding_dict.get("exploit_scenario"),
+        "remediation_json":     finding_dict.get("remediation_json"),
+        "soc2_controls":        finding_dict.get("soc2_controls"),
+        "confidence_score":     finding_dict.get("confidence_score"),
+        "false_positive_risk":  finding_dict.get("false_positive_risk"),
+        "false_positive_reason":finding_dict.get("false_positive_reason"),
+        "enrichment_status":    finding_dict.get("enrichment_status", "pending"),
+        "created_at":           created_at,
     }
 
     with _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO findings (
-              id, scan_id, pass_name, file_path, line_start, line_end, severity, category,
-              raw_title, code_snippet, cve_id, cwe_id, owasp_category, npm_package,
-              plain_english, business_risk, exploit_scenario, remediation_json, soc2_controls,
-              confidence_score, false_positive_risk, false_positive_reason, enrichment_status, created_at
+              id, scan_id, pass_name, file_path, line_start, line_end,
+              severity, category, raw_title, code_snippet, cve_id, cwe_id,
+              owasp_category, npm_package, plain_english, business_risk,
+              exploit_scenario, remediation_json, soc2_controls,
+              confidence_score, false_positive_risk, false_positive_reason,
+              enrichment_status, created_at
             ) VALUES (
-              :id, :scan_id, :pass_name, :file_path, :line_start, :line_end, :severity, :category,
-              :raw_title, :code_snippet, :cve_id, :cwe_id, :owasp_category, :npm_package,
-              :plain_english, :business_risk, :exploit_scenario, :remediation_json, :soc2_controls,
-              :confidence_score, :false_positive_risk, :false_positive_reason, :enrichment_status, :created_at
+              :id, :scan_id, :pass_name, :file_path, :line_start, :line_end,
+              :severity, :category, :raw_title, :code_snippet, :cve_id, :cwe_id,
+              :owasp_category, :npm_package, :plain_english, :business_risk,
+              :exploit_scenario, :remediation_json, :soc2_controls,
+              :confidence_score, :false_positive_risk, :false_positive_reason,
+              :enrichment_status, :created_at
             )
             """,
             values,
@@ -314,29 +394,27 @@ def update_finding(finding_id: str, **kwargs: Any) -> None:
         updates["code_snippet"] = str(updates["code_snippet"])[:300]
     if not updates:
         return
-
-    columns = ", ".join([f"{k} = ?" for k in updates.keys()])
-    values = list(updates.values())
-    values.append(finding_id)
-
+    placeholders = ", ".join([f"{k} = ?" for k in updates.keys()])
+    values = list(updates.values()) + [finding_id]
     with _get_conn() as conn:
-        conn.execute(f"UPDATE findings SET {columns} WHERE id = ?", values)
+        conn.execute(
+            f"UPDATE findings SET {placeholders} WHERE id = ?", values
+        )
         conn.commit()
 
 
-def get_findings(scan_id: str) -> list[dict[str, Any]]:
+def get_findings(scan_id: str) -> "list[dict[str, Any]]":
     with _get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT *
-            FROM findings
+            SELECT * FROM findings
             WHERE scan_id = ?
             ORDER BY
               CASE LOWER(COALESCE(severity, 'info'))
                 WHEN 'critical' THEN 4
-                WHEN 'high' THEN 3
-                WHEN 'medium' THEN 2
-                WHEN 'low' THEN 1
+                WHEN 'high'     THEN 3
+                WHEN 'medium'   THEN 2
+                WHEN 'low'      THEN 1
                 ELSE 0
               END DESC,
               COALESCE(line_start, 0) ASC,
@@ -348,11 +426,10 @@ def get_findings(scan_id: str) -> list[dict[str, Any]]:
         return [_row_to_dict(r) for r in rows if r is not None]
 
 
-def get_finding(finding_id: str) -> dict[str, Any] | None:
+def get_finding(finding_id: str) -> "dict[str, Any] | None":
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM findings WHERE id = ?",
-            (finding_id,),
+            "SELECT * FROM findings WHERE id = ?", (finding_id,)
         ).fetchone()
         return _row_to_dict(row)
 
@@ -360,7 +437,6 @@ def get_finding(finding_id: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Analytics / session tracking
 # ---------------------------------------------------------------------------
-
 def log_scan_session(
     scan_id: str,
     repo_url: str,
@@ -370,22 +446,21 @@ def log_scan_session(
 ) -> str:
     """Create an analytics row the moment a scan starts. Returns session_id."""
     session_id = str(uuid.uuid4())
-    repo_name = _normalize_repo_name(repo_url) or repo_url
-    # Best-effort IP → country lookup (free, no key needed)
+    repo_name  = _normalize_repo_name(repo_url) or repo_url
     country, city = _geolocate_ip(ip_address)
     with _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO scan_sessions
-              (session_id, scan_id, repo_url, repo_name, ip_address, country, city,
-               user_agent, referrer, started_at, scan_completed, pdf_downloaded)
+              (session_id, scan_id, repo_url, repo_name, ip_address,
+               country, city, user_agent, referrer, started_at,
+               scan_completed, pdf_downloaded)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
             """,
             (
                 session_id, scan_id, repo_url, repo_name,
                 ip_address, country, city,
-                user_agent, referrer,
-                _utc_now_iso(),
+                user_agent, referrer, _utc_now_iso(),
             ),
         )
         conn.commit()
@@ -393,11 +468,11 @@ def log_scan_session(
 
 
 def update_session_on_complete(scan_id: str) -> None:
-    """Copy final counts from the scans table into scan_sessions once a scan finishes."""
+    """Copy final counts from the scans table into scan_sessions once done."""
     scan = get_scan(scan_id)
     if not scan:
         return
-    started_at = scan.get("created_at") or ""
+    started_at   = scan.get("created_at") or ""
     completed_at = scan.get("completed_at") or _utc_now_iso()
     elapsed = 0
     try:
@@ -417,6 +492,7 @@ def update_session_on_complete(scan_id: str) -> None:
                 continue
     except Exception:
         pass
+
     with _get_conn() as conn:
         conn.execute(
             """
@@ -457,25 +533,24 @@ def mark_pdf_downloaded(scan_id: str) -> None:
         conn.commit()
 
 
-def get_all_sessions(limit: int = 500) -> list[dict[str, Any]]:
+def get_all_sessions(limit: int = 500) -> "list[dict[str, Any]]":
     """Return most recent scan sessions for the admin dashboard."""
     with _get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT * FROM scan_sessions
-            ORDER BY started_at DESC
-            LIMIT ?
-            """,
+            "SELECT * FROM scan_sessions ORDER BY started_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows if r is not None]
 
 
-def _geolocate_ip(ip: str) -> tuple[str, str]:
-    """Best-effort, no-key IP geolocation via ip-api.com. Returns (country, city)."""
-    private_prefixes = ("127.", "10.", "192.168.", "172.16.", "172.17.",
-                        "172.18.", "172.19.", "172.2", "::1", "localhost", "")
-    if not ip or any(ip.startswith(p) for p in private_prefixes):
+# ---------------------------------------------------------------------------
+# IP geolocation (best-effort, no API key needed)
+# ---------------------------------------------------------------------------
+def _geolocate_ip(ip: str) -> "tuple[str, str]":
+    """Resolve IP → (country, city) via ip-api.com free endpoint."""
+    private = ("127.", "10.", "192.168.", "172.16.", "172.17.", "172.18.",
+               "172.19.", "172.2", "::1", "localhost", "")
+    if not ip or any(ip.startswith(p) for p in private):
         return "Local", "Local"
     try:
         import urllib.request
