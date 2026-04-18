@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecurePath Report Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+  <style>
+    .preview-wrap {
+      width: min(1200px, 100% - 48px);
+      margin: 22px auto 36px;
+      position: relative;
+      z-index: 1;
+    }
+    .preview-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .preview-head h1 {
+      margin: 0;
+      font-size: 1.35rem;
+    }
+    .preview-meta {
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .preview-list {
+      display: grid;
+      gap: 10px;
+    }
+    .preview-item {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(22,27,34,.96), rgba(13,17,23,.96));
+      padding: 12px;
+    }
+    .preview-item h3 {
+      margin: 0 0 8px;
+      font-size: 0.96rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .preview-item p {
+      margin: 6px 0;
+      color: var(--text-secondary);
+      font-size: 0.86rem;
+    }
+    .preview-item pre {
+      margin: 8px 0 0;
+      background: rgba(10, 14, 23, 0.8);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 10px;
+      color: #d8e5f5;
+      font-size: 0.78rem;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body class="dashboard-body">
+  <div class="bg-grid"></div>
+  <header class="nav">
+    <a class="brand" href="/">SECUREPATH</a>
+    <div class="nav-right">
+      <span class="badge">Report Preview</span>
+      <a class="nav-link" href="/scan/{{ scan['id'] }}">Back to Dashboard</a>
+    </div>
+  </header>
+
+  <main class="preview-wrap">
+    <section class="card">
+      <div class="preview-head">
+        <h1>Report Preview</h1>
+        <a class="btn btn-primary" href="/api/scan/{{ scan['id'] }}/download">Download PDF</a>
+      </div>
+      <div class="preview-meta">
+        <span>Repo: <b>{{ scan['repo_name'] or scan['repo_url'] }}</b></span>
+        <span>Commit: <b class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</b></span>
+        <span>Risk score: <b>{{ scan['risk_score'] or 0 }}</b></span>
+        <span>Total findings: <b>{{ scan['findings_count'] or findings|length }}</b></span>
+      </div>
+    </section>
+
+    <section class="preview-list">
+      {% if findings %}
+        {% for f in findings %}
+          <article class="preview-item">
+            <h3>
+              <span class="severity-chip {{ f['severity']|lower }}">{{ f['severity']|upper }}</span>
+              {{ f['raw_title'] or 'Untitled finding' }}
+              <span class="tag">{{ f['cwe_id'] or 'CWE-Unknown' }}</span>
+            </h3>
+            <p><b>Location:</b> <span class="mono">{{ f['file_path'] }}:{{ f['line_start'] }}-{{ f['line_end'] }}</span></p>
+            <p><b>Category:</b> {{ f['category'] }} | <b>OWASP:</b> {{ f['owasp_category'] or 'Unknown' }}</p>
+            <p><b>Plain English:</b> {{ f['plain_english'] or 'Pending enrichment' }}</p>
+            <p><b>Business Risk:</b> {{ f['business_risk'] or 'Pending enrichment' }}</p>
+            <p><b>SOC2:</b> {{ f['soc2_controls'] or 'Not mapped' }} | <b>Confidence:</b> {{ f['confidence_score'] or 'n/a' }}/10</p>
+            <pre><code>{{ f['code_snippet'] or 'No snippet available' }}</code></pre>
+          </article>
+        {% endfor %}
+      {% else %}
+        <section class="card">
+          <p class="tiny-muted">No findings available yet. Start a scan or wait for enrichment to complete.</p>
+        </section>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecurePath — Auditor-Ready SOC2 Evidence</title>
+  <meta name="description" content="SecurePath transforms vulnerabilities into auditor-accepted SOC2 compliance evidence.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body class="landing-body">
+  <div class="bg-grid"></div>
+  <header class="nav">
+    <div class="brand">SECUREPATH</div>
+    <div class="nav-right">
+      <span class="badge">v0.1.0 beta</span>
+      <a class="nav-link" href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-left">
+        <div class="eyebrow">SOC2 COMPLIANCE EVIDENCE PLATFORM</div>
+        <h1 class="hero-title">
+          Security findings.<br>
+          Auditor evidence.<br>
+          One scan.
+        </h1>
+        <p class="hero-subtitle">
+          SecurePath transforms raw vulnerabilities into tamper-proof SOC2 compliance evidence.
+          Not alerts — proof.
+        </p>
+
+        <div class="scan-card">
+          <form id="scan-form" novalidate>
+            <label for="repo_url" class="input-label">GitHub Repository URL</label>
+            <div class="input-row">
+              <input
+                id="repo_url"
+                name="repo_url"
+                type="url"
+                autocomplete="off"
+                placeholder="https://github.com/your-org/your-repo"
+                required
+              >
+              <button id="scan-btn" type="submit">SCAN REPO</button>
+            </div>
+            <p id="form-error" class="form-error" aria-live="polite"></p>
+          </form>
+          <p class="scan-meta">Free. No signup. Works on any public GitHub repo.</p>
+          <p class="scan-meta lockline">
+            <span class="lock-icon" aria-hidden="true">🔒</span>
+            Repo is cloned locally and deleted after scan
+          </p>
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="terminal-shell">
+          <div class="terminal-topbar">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <span class="terminal-title">securepath_scan.log</span>
+          </div>
+          <div class="terminal-body" id="terminal-body">
+            <div class="terminal-line prompt"><span>&gt; Initializing SecurePath runtime...</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-bar">
+      <div class="stat">OWASP Top 10 Coverage</div>
+      <div class="stat">SOC2 Control Mapping</div>
+      <div class="stat">SHA-256 Audit Trail</div>
+    </section>
+
+    <section class="how">
+      <h2>How It Works</h2>
+      <div class="steps">
+        <article class="step-card">
+          <div class="step-num">01</div>
+          <h3>SCAN</h3>
+          <p>Paste any GitHub URL. We run 5-pass analysis: SAST, dependency CVEs, secret detection, structural analysis, and config audit.</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">02</div>
+          <h3>UNDERSTAND</h3>
+          <p>Every finding gets EXAI enrichment: plain English explanation, business risk, exploit scenario, and 3 ranked remediation options.</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">03</div>
+          <h3>EVIDENCE</h3>
+          <p>Download a PDF your Big 4 auditor will accept as SOC2 remediation evidence. SHA-256 tamper-proof and review-ready.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="demo-finding">
+      <h2>Sample Finding Card</h2>
+      <div class="finding-card">
+        <div class="finding-header">
+          <div class="finding-title">SQL injection via unsafe query interpolation</div>
+          <div class="finding-badges">
+            <span class="sev critical">CRITICAL</span>
+            <span class="tag">CWE-89</span>
+            <span class="tag">A03:2021</span>
+          </div>
+        </div>
+
+        <div class="finding-grid">
+          <div class="finding-left">
+            <div class="block">
+              <div class="block-label">PLAIN ENGLISH</div>
+              <p>In <code>routes/vulnCodeSnippets.js</code> line 40, user input is concatenated into a SQL statement, allowing an attacker to execute arbitrary SQL against production data.</p>
+            </div>
+            <div class="block risk">
+              <div class="block-label">BUSINESS RISK</div>
+              <p>An attacker can exfiltrate customer records and alter transactional data, triggering SOC2 CC6.1 and CC6.7 control failures and likely contractual breach obligations.</p>
+            </div>
+            <div class="block exploit">
+              <div class="block-label">EXPLOIT SCENARIO</div>
+              <p>An attacker submits crafted payloads through a search parameter to append UNION SELECT queries. They retrieve hashed credentials and pivot into authenticated admin workflows.</p>
+            </div>
+            <div class="block">
+              <div class="block-label">CODE LOCATION</div>
+              <pre><code>routes/vulnCodeSnippets.js:40
+const q = `SELECT * FROM Users WHERE email = '${req.query.email}'`;</code></pre>
+            </div>
+          </div>
+          <div class="finding-right">
+            <div class="rem-card">
+              <h4>OPTION 1: QUICK FIX <span>&lt; 1 hour</span></h4>
+              <p>Replace string interpolation with Sequelize replacements and reject unsafe characters in the input path.</p>
+              <small>Tradeoff: immediate containment but doesn’t enforce a central query policy.</small>
+            </div>
+            <div class="rem-card">
+              <h4>OPTION 2: PROPER FIX <span>&lt; 4 hours</span></h4>
+              <p>Migrate endpoint to parameterized ORM queries and add schema validation middleware using <code>zod</code>.</p>
+              <small>Tradeoff: best risk reduction per effort with moderate refactor impact.</small>
+            </div>
+            <div class="rem-card">
+              <h4>OPTION 3: ROBUST FIX <span>1-2 days</span></h4>
+              <p>Centralize data access behind repository interfaces, enforce query linting in CI, and add security regression tests.</p>
+              <small>Tradeoff: highest confidence and maintainability, broader engineering coordination.</small>
+            </div>
+            <div class="compliance-line">
+              <span class="ctl">CC6.1</span>
+              <span class="ctl">CC6.7</span>
+              <span class="ctl">CC7.1</span>
+              <span class="meta">Confidence: 9/10</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Built for engineering teams serious about SOC2</p>
+    <div class="footer-links">
+      <a href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://twitter.com" target="_blank" rel="noreferrer">Twitter</a>
+      <a href="mailto:contact@securepath.dev">Contact</a>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const form = document.getElementById("scan-form");
+      const input = document.getElementById("repo_url");
+      const button = document.getElementById("scan-btn");
+      const errorEl = document.getElementById("form-error");
+      const terminalBody = document.getElementById("terminal-body");
+      const githubRegex = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/;
+
+      const terminalLines = [
+        "> Cloning juice-shop/juice-shop...",
+        "> Running SAST analysis (semgrep)...",
+        "[████████░░] 78%",
+        "✗ CRITICAL: SQL injection in routes/vulnCodeSnippets.js:40",
+        "✗ CRITICAL: Hardcoded JWT secret in config/index.js:13",
+        "✗ HIGH: eval() usage in routes/angular.js:8",
+        "> Enriching with AI analysis...",
+        "> Generating audit evidence PDF...",
+        "✓ Complete. 23 findings. Risk score: 94/100"
+      ];
+
+      let terminalIndex = 0;
+      let loopTimeout;
+
+      function clearError() {
+        errorEl.textContent = "";
+      }
+
+      function showError(message) {
+        errorEl.textContent = message;
+      }
+
+      async function submitScan(repoUrl) {
+        const response = await fetch("/api/scan/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo_url: repoUrl })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Unable to start scan.");
+        }
+        window.location.href = data.redirect || ("/scan/" + data.scan_id);
+      }
+
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        clearError();
+        const repoUrl = input.value.trim();
+        if (!githubRegex.test(repoUrl)) {
+          showError("Enter a valid public GitHub URL, e.g. https://github.com/juice-shop/juice-shop");
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "SCANNING...";
+        try {
+          await submitScan(repoUrl);
+        } catch (err) {
+          showError(err.message || "Scan failed to start.");
+          button.disabled = false;
+          button.textContent = "SCAN REPO";
+        }
+      });
+
+      function renderTerminalLine(text, isCurrent) {
+        const line = document.createElement("div");
+        line.className = "terminal-line" + (text.startsWith("✗") ? " err" : text.startsWith("✓") ? " ok" : " prompt");
+        const span = document.createElement("span");
+        span.textContent = text;
+        line.appendChild(span);
+        if (isCurrent) {
+          const cursor = document.createElement("i");
+          cursor.className = "cursor";
+          line.appendChild(cursor);
+        }
+        return line;
+      }
+
+      function animateTerminal() {
+        if (!terminalBody) {
+          return;
+        }
+        terminalBody.innerHTML = "";
+        terminalIndex = 0;
+
+        function step() {
+          const done = terminalIndex >= terminalLines.length;
+          if (done) {
+            loopTimeout = setTimeout(animateTerminal, 1800);
+            return;
+          }
+          const lines = terminalBody.querySelectorAll(".terminal-line");
+          if (lines.length) {
+            lines[lines.length - 1].querySelector(".cursor")?.remove();
+          }
+          const line = renderTerminalLine(terminalLines[terminalIndex], true);
+          terminalBody.appendChild(line);
+          terminalBody.scrollTop = terminalBody.scrollHeight;
+          terminalIndex += 1;
+          loopTimeout = setTimeout(step, 400);
+        }
+
+        step();
+      }
+
+      window.addEventListener("beforeunload", function () {
+        if (loopTimeout) {
+          clearTimeout(loopTimeout);
+        }
+      });
+
+      animateTerminal();
+    })();
+  </script>
+</body>
+</html>

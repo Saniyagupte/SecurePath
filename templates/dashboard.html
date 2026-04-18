@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecurePath Scan Dashboard</title>
+  <meta name="description" content="Live scan dashboard for SecurePath SOC2 evidence generation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body class="dashboard-body">
+  <div class="bg-grid"></div>
+  <header class="nav">
+    <a class="brand" href="/">SECUREPATH</a>
+    <div class="nav-right">
+      <span class="badge">Scan Dashboard</span>
+      <a class="nav-link" href="/">New Scan</a>
+    </div>
+  </header>
+
+  <main class="dashboard-main" data-scan-id="{{ scan['id'] }}">
+    <section id="state-scanning" class="state-pane">
+      <div class="progress-wrap">
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-fill" style="width: {{ scan['progress'] or 0 }}%;"></div>
+        </div>
+        <div id="step-label" class="progress-step">{{ scan['current_step'] or 'Initializing scan...' }}</div>
+      </div>
+
+      <div class="scan-layout">
+        <aside class="card scan-meta-card">
+          <h2>Scan Metadata</h2>
+          <dl class="meta-grid">
+            <dt>Repo</dt>
+            <dd id="meta-repo">{{ scan['repo_name'] or scan['repo_url'] }}</dd>
+            <dt>Commit</dt>
+            <dd id="meta-sha" class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</dd>
+            <dt>Started</dt>
+            <dd id="meta-started">{{ scan['created_at'] or 'pending' }}</dd>
+            <dt>Status</dt>
+            <dd><span id="status-badge" class="status-badge pulsing">{{ scan['status'] or 'queued' }}</span></dd>
+          </dl>
+        </aside>
+
+        <section class="card live-feed">
+          <div class="card-header-row">
+            <h2>Live Findings Feed</h2>
+            <span class="tiny-muted">Updates every 2s</span>
+          </div>
+          <div id="live-feed-list" class="live-feed-list">
+            <div id="waiting-feed" class="empty-note">Waiting for first findings...</div>
+          </div>
+          <p class="bottom-note">
+            Findings will appear as they are discovered. AI enrichment runs in parallel.
+          </p>
+        </section>
+      </div>
+    </section>
+
+    <section id="state-complete" class="state-pane hidden">
+      <div class="card metrics-bar">
+        <div class="metric-left">
+          <div class="risk-block">
+            <div class="risk-label">Risk Score</div>
+            <div id="risk-score" class="risk-score">0</div>
+          </div>
+          <div class="sev-counts">
+            <span class="sev-pill critical">CRITICAL: <b id="count-critical">0</b></span>
+            <span class="sev-pill high">HIGH: <b id="count-high">0</b></span>
+            <span class="sev-pill medium">MEDIUM: <b id="count-medium">0</b></span>
+            <span class="sev-pill low">LOW: <b id="count-low">0</b></span>
+          </div>
+          <div class="meta-inline">
+            <span>Repo: <b id="repo-inline">{{ scan['repo_name'] or scan['repo_url'] }}</b></span>
+            <span>Commit: <b id="sha-inline" class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</b></span>
+            <span>Duration: <b id="duration-inline">calculating...</b></span>
+            <span>Total findings: <b id="total-inline">{{ scan['findings_count'] or 0 }}</b></span>
+          </div>
+        </div>
+        <div class="metric-actions">
+          <a id="download-btn" class="btn btn-primary" href="/api/scan/{{ scan['id'] }}/download">DOWNLOAD AUDIT REPORT PDF</a>
+          <a id="preview-btn" class="btn btn-secondary" href="/scan/{{ scan['id'] }}/preview">Preview Report</a>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-header-row">
+          <h2>OWASP Top 10 Coverage</h2>
+        </div>
+        <div id="owasp-grid" class="owasp-grid">
+          <div class="owasp-box" data-cat="A01:2021 - Broken Access Control"><span>A01</span> Broken Access Control</div>
+          <div class="owasp-box" data-cat="A02:2021 - Cryptographic Failures"><span>A02</span> Cryptographic Failures</div>
+          <div class="owasp-box" data-cat="A03:2021 - Injection"><span>A03</span> Injection</div>
+          <div class="owasp-box" data-cat="A04:2021 - Insecure Design"><span>A04</span> Insecure Design</div>
+          <div class="owasp-box" data-cat="A05:2021 - Security Misconfiguration"><span>A05</span> Security Misconfiguration</div>
+          <div class="owasp-box" data-cat="A06:2021 - Vulnerable and Outdated Components"><span>A06</span> Vulnerable Components</div>
+          <div class="owasp-box" data-cat="A07:2021 - Identification and Authentication Failures"><span>A07</span> Auth Failures</div>
+          <div class="owasp-box" data-cat="A08:2021 - Software and Data Integrity Failures"><span>A08</span> Data Integrity</div>
+          <div class="owasp-box" data-cat="A09:2021 - Security Logging and Monitoring Failures"><span>A09</span> Logging & Monitoring</div>
+          <div class="owasp-box" data-cat="A10:2021 - Server-Side Request Forgery"><span>A10</span> SSRF</div>
+        </div>
+      </section>
+
+      <section class="card findings-card">
+        <div class="card-header-row">
+          <h2>Findings</h2>
+          <div class="sort-hint">Click headers to sort. Click row to expand EXAI details.</div>
+        </div>
+        <div class="table-wrap">
+          <table id="findings-table">
+            <thead>
+              <tr>
+                <th data-sort="severity">Severity</th>
+                <th data-sort="category">Category</th>
+                <th data-sort="file_path">File</th>
+                <th data-sort="line_start">Line</th>
+                <th data-sort="raw_title">Title</th>
+                <th data-sort="soc2_controls">SOC2</th>
+                <th data-sort="confidence_score">Confidence</th>
+              </tr>
+            </thead>
+            <tbody id="findings-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="state-error" class="state-pane hidden">
+      <div class="error-card">
+        <h2>Scan Failed</h2>
+        <p id="error-message">An unexpected error occurred.</p>
+        <a class="btn btn-primary" href="/">Try Another Repo</a>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    window.__SECUREPATH_BOOTSTRAP__ = {
+      scanId: "{{ scan['id'] }}",
+      initialStatus: "{{ scan['status'] or 'queued' }}",
+      initialProgress: {{ scan['progress'] or 0 }},
+      initialStep: {{ (scan['current_step'] or 'Initializing scan...')|tojson }},
+      createdAt: {{ (scan['created_at'] or '')|tojson }},
+      commitSha: {{ (scan['commit_sha'] or '')|tojson }},
+      repoName: {{ (scan['repo_name'] or scan['repo_url'] or '')|tojson }},
+      counts: {
+        critical: {{ scan['critical_count'] or 0 }},
+        high: {{ scan['high_count'] or 0 }},
+        medium: {{ scan['medium_count'] or 0 }},
+        low: {{ scan['low_count'] or 0 }}
+      },
+      riskScore: {{ scan['risk_score'] or 0 }},
+      totalFindings: {{ scan['findings_count'] or 0 }}
+    };
+  </script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
