@@ -286,29 +286,29 @@ class SecurityScanner:
         self._ensure_semgrep()
         findings: list[dict[str, Any]] = []
 
+        # Use a single, highly optimized semgrep pass instead of multiple heavy ones
+        # This prevents locking up on Render's 0.1 CPU Free Tier.
         commands = [
             [
                 "semgrep",
                 "--config=p/nodejs",
-                "--config=p/owasp-top-ten",
                 "--config=p/secrets",
-                "-j", "1",               # Run strictly single-threaded to prevent OOM
-                "--max-memory=150",      # Abort file parsing if it exceeds 150MB
-                "--timeout=30",          # Timeout on overly complex files
-                "--json",
-                "--quiet",
-                str(self.repo_path),
-            ],
-            [
-                "semgrep",
-                "--config=p/javascript",
                 "-j", "1",
                 "--max-memory=150",
-                "--timeout=30",
+                "--max-target-bytes=500000",   # Skip files over 500KB
+                "--timeout=10",                # 10s per file max
+                "--exclude-dir=node_modules",
+                "--exclude-dir=dist",
+                "--exclude-dir=build",
+                "--exclude-dir=coverage",
+                "--exclude=*.min.js",
+                "--exclude=*.map",
+                "--exclude=*test.js",
+                "--exclude=*spec.js",
                 "--json",
                 "--quiet",
                 str(self.repo_path),
-            ],
+            ]
         ]
 
         for cmd in commands:
