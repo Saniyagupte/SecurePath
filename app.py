@@ -176,7 +176,11 @@ def admin_dashboard():
         findings = s.get("findings_count") or 0
         crit = s.get("critical_count") or 0
         duration = s.get("time_to_complete_seconds") or 0
-        pdf = "\u2705" if s.get("pdf_downloaded") else "\u274c"
+        pdf_status = "✅ " if s.get("pdf_downloaded") else ""
+        if s.get("scan_completed"):
+            pdf = f"<a href='/api/scan/{s.get('scan_id')}/download' target='_blank' style='text-decoration:none; color:inherit' title='Download PDF'>📥 {pdf_status}</a>"
+        else:
+            pdf = "⏳"
         risk = s.get("risk_score") or 0
         ua = (s.get("user_agent") or "")[:60]
         rows_html += f"""
