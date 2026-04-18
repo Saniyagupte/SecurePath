@@ -105,7 +105,7 @@
             <p><b>Category:</b> {{ f['category'] }} | <b>OWASP:</b> {{ f['owasp_category'] or 'Unknown' }}</p>
             <p><b>Plain English:</b> {{ f['plain_english'] or 'Pending enrichment' }}</p>
             <p><b>Business Risk:</b> {{ f['business_risk'] or 'Pending enrichment' }}</p>
-            <p><b>SOC2:</b> {{ f['soc2_controls'] or 'Not mapped' }} | <b>Confidence:</b> {{ f['confidence_score'] or 'n/a' }}/10</p>
+            <p><b>Compliance:</b> {{ f['soc2_controls'] or 'Not mapped' }} | <b>Confidence:</b> {{ f['confidence_score'] or 'n/a' }}/10</p>
             <pre><code>{{ f['code_snippet'] or 'No snippet available' }}</code></pre>
           </article>
         {% endfor %}

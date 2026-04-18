@@ -164,7 +164,7 @@ Code:
 {f"CVE: {finding.get('cve_id')}" if finding.get('cve_id') else ""}
 
 Return ONLY a valid JSON object. No markdown fences. No preamble.
-Do not include SOC2 controls.
+Do not include compliance controls.
 Use this exact schema:
 
 {{
@@ -355,6 +355,10 @@ Use this exact schema:
 
         fp_risk = "low" if severity in {"critical", "high"} else "medium"
 
+        base_confidence = 8 if severity in {"critical", "high"} else 6
+        if category == "secrets":
+            base_confidence = min(base_confidence, 6)
+
         enriched = dict(mapped)
         enriched.update(
             {
@@ -363,7 +367,7 @@ Use this exact schema:
                 "exploit_scenario": exploit_templates.get(category, exploit_templates["misc"])[:1200],
                 "remediation": rem,
                 "vulnerability_type": vuln_type,
-                "confidence_score": 8 if severity in {"critical", "high"} else 6,
+                "confidence_score": base_confidence,
                 "false_positive_risk": fp_risk,
                 "false_positive_reason": (
                     f"The finding is pattern-based (CWE {cwe}, {owasp}); manual validation should confirm runtime reachability and exploitability."

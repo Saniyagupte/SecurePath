@@ -308,7 +308,7 @@
 
         <div class="tab-pane" data-pane="compliance">
           <div class="compliance-grid">
-            <div><b>SOC2 Controls:</b></div>
+            <div><b>Relevant Compliance Controls:</b></div>
             <div class="controls-wrap">
               ${
                 controls.length
