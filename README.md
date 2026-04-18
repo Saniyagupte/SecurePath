@@ -83,6 +83,3 @@ EXAI_MODEL=llama-3.3-70b-versatile
 - The scanner clones repositories to a temporary path and removes them after scan completion.
 - Findings are persisted in SQLite (`securepath.db`) for scan history and report reproducibility.
 
-## Twitter-ready description
-
-"I built a tool that scans your GitHub repo and generates auditor-ready SOC2 compliance evidence in under 2 minutes. Scanned OWASP Juice Shop: found critical vulnerabilities, mapped each one to SOC2 controls, and generated a tamper-proof PDF evidence pack."
