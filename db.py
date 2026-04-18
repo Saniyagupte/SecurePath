@@ -251,6 +251,15 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS scan_reports (
+              scan_id TEXT PRIMARY KEY,
+              pdf_blob BYTEA,
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS scan_sessions (
               session_id               TEXT PRIMARY KEY,
               scan_id                  TEXT,
@@ -541,6 +550,41 @@ def get_all_sessions(limit: int = 500) -> "list[dict[str, Any]]":
             (limit,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows if r is not None]
+
+
+# ---------------------------------------------------------------------------
+# PDF Binary Storage
+# ---------------------------------------------------------------------------
+def save_pdf_to_db(scan_id: str, pdf_bytes: bytes) -> None:
+    """Store the physical PDF bytes inside the database permanently."""
+    with _get_conn() as conn:
+        if _USE_POSTGRES:
+            import psycopg2
+            blob = psycopg2.Binary(pdf_bytes)
+        else:
+            blob = pdf_bytes
+            
+        conn.execute("DELETE FROM scan_reports WHERE scan_id = ?", (scan_id,))
+        conn.execute(
+            "INSERT INTO scan_reports (scan_id, pdf_blob) VALUES (?, ?)",
+            (scan_id, blob)
+        )
+        conn.commit()
+
+
+def get_pdf_from_db(scan_id: str) -> "bytes | None":
+    """Retrieve the physical PDF bytes out of the database."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT pdf_blob FROM scan_reports WHERE scan_id = ?", (scan_id,)
+        ).fetchone()
+        if not row:
+            return None
+        # row can be indexable or dict-like
+        blob = row[0] if isinstance(row, tuple) else row["pdf_blob"]
+        if _USE_POSTGRES and blob is not None:
+            return bytes(blob)
+        return blob
 
 
 # ---------------------------------------------------------------------------
