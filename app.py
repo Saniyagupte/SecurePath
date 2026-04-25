@@ -329,6 +329,8 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
                 confidence_score=ef.get("confidence_score"),
                 false_positive_risk=ef.get("false_positive_risk"),
                 false_positive_reason=ef.get("false_positive_reason"),
+                business_impact_json=ef.get("business_impact_json"),
+                assets_exposed_json=ef.get("assets_exposed_json"),
                 enrichment_status="failed"
                 if ef.get("enrichment_failed")
                 else "complete",

@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from typing import Any
@@ -15,18 +16,22 @@ from db import REPORTS_DIR  # resolves to /data/reports in prod, ./reports local
 
 
 class AuditReportGenerator:
-    DARK_BG = colors.HexColor("#0d1117")
-    ACCENT_RED = colors.HexColor("#e94560")
-    ACCENT_BLUE = colors.HexColor("#58a6ff")
-    CRITICAL = colors.HexColor("#ff2d55")
-    HIGH = colors.HexColor("#ff9f0a")
-    MEDIUM = colors.HexColor("#ffd60a")
-    LOW = colors.HexColor("#34c759")
-    LIGHT_GRAY = colors.HexColor("#f6f8fa")
-    MID_GRAY = colors.HexColor("#8b949e")
-    BORDER = colors.HexColor("#21262d")
+    # Professional monochrome palette
+    BLACK = colors.HexColor("#000000")
+    NEAR_BLACK = colors.HexColor("#111111")
+    DARK_GRAY = colors.HexColor("#333333")
+    MID_GRAY = colors.HexColor("#666666")
+    LIGHT_GRAY = colors.HexColor("#999999")
+    RULE_GRAY = colors.HexColor("#cccccc")
+    BG_LIGHT = colors.HexColor("#f5f5f5")
+    BG_ALT = colors.HexColor("#eeeeee")
     WHITE = colors.HexColor("#ffffff")
-    DARK_TEXT = colors.HexColor("#0d1117")
+
+    # Severity uses weight, not color — but we keep subtle gray tones for badges
+    SEV_CRITICAL = colors.HexColor("#111111")
+    SEV_HIGH = colors.HexColor("#333333")
+    SEV_MEDIUM = colors.HexColor("#666666")
+    SEV_LOW = colors.HexColor("#999999")
 
     PAGE_W, PAGE_H = A4
     MARGIN_X = 48
@@ -38,16 +43,16 @@ class AuditReportGenerator:
             "Body",
             parent=self.styles["BodyText"],
             fontName="Helvetica",
-            fontSize=10.5,
-            leading=14,
-            textColor=self.DARK_TEXT,
+            fontSize=10,
+            leading=13.5,
+            textColor=self.NEAR_BLACK,
         )
         self.small = ParagraphStyle(
             "Small",
             parent=self.body,
-            fontSize=8.5,
-            leading=11,
-            textColor=colors.HexColor("#4b5563"),
+            fontSize=8,
+            leading=10.5,
+            textColor=self.MID_GRAY,
         )
         self.h2 = ParagraphStyle(
             "H2",
@@ -55,7 +60,7 @@ class AuditReportGenerator:
             fontName="Helvetica-Bold",
             fontSize=16,
             leading=20,
-            textColor=self.DARK_TEXT,
+            textColor=self.BLACK,
         )
         self.mono = "Courier"
         self.finding_counter = 0
@@ -96,24 +101,21 @@ class AuditReportGenerator:
         c.save()
         return out_path
 
-    def _risk_color(self, score: int) -> colors.Color:
-        if score <= 30:
-            return self.LOW
-        if score <= 60:
-            return self.MEDIUM
-        if score <= 80:
-            return self.HIGH
-        return self.CRITICAL
+    def _severity_label(self, severity: str) -> str:
+        return str(severity).upper()
 
-    def _severity_color(self, severity: str) -> colors.Color:
+    def _severity_bg(self, severity: str) -> colors.Color:
         m = {
-            "critical": self.CRITICAL,
-            "high": self.HIGH,
-            "medium": self.MEDIUM,
-            "low": self.LOW,
-            "info": self.ACCENT_BLUE,
+            "critical": self.SEV_CRITICAL,
+            "high": self.SEV_HIGH,
+            "medium": self.SEV_MEDIUM,
+            "low": self.SEV_LOW,
+            "info": self.LIGHT_GRAY,
         }
         return m.get(str(severity).lower(), self.MID_GRAY)
+
+    def _severity_fg(self, severity: str) -> colors.Color:
+        return self.WHITE
 
     @staticmethod
     def _safe(value: Any, maxlen: int = 300, fallback: str = "") -> str:
@@ -123,14 +125,14 @@ class AuditReportGenerator:
         s = str(value).replace("\x00", "").strip()
         return s[:maxlen] if len(s) > maxlen else s
 
-    def _draw_footer(self, c: canvas.Canvas, page_num: int, dark: bool = False) -> None:
-        c.setFont("Helvetica", 8)
-        if dark:
-            c.setFillColor(self.MID_GRAY)
-        else:
-            c.setFillColor(colors.HexColor("#6b7280"))
-        c.drawString(self.MARGIN_X, 20, "SecurePath v1.0.0")
+    def _draw_footer(self, c: canvas.Canvas, page_num: int) -> None:
+        c.setFont("Helvetica", 7.5)
+        c.setFillColor(self.LIGHT_GRAY)
+        c.drawString(self.MARGIN_X, 20, "SecurePath v1.0.0  ·  Security Assessment Report")
         c.drawRightString(self.PAGE_W - self.MARGIN_X, 20, f"Page {page_num}")
+        c.setStrokeColor(self.RULE_GRAY)
+        c.setLineWidth(0.3)
+        c.line(self.MARGIN_X, 32, self.PAGE_W - self.MARGIN_X, 32)
 
     def _controls_for_finding(self, finding: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
         controls = finding.get("soc2_controls")
@@ -143,92 +145,105 @@ class AuditReportGenerator:
         mapped = get_soc2_mapping_for_finding(finding)
         return mapped["controls"], mapped["rationale"]
 
+    # ────────────────────────────────────────────────────────────────
+    # COVER PAGE
+    # ────────────────────────────────────────────────────────────────
     def _draw_cover_page(self, c: canvas.Canvas, scan: dict, findings: list[dict]) -> None:
-        c.setFillColor(self.DARK_BG)
+        c.setFillColor(self.WHITE)
         c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
 
-        c.setFillColor(self.ACCENT_RED)
-        c.setFont("Helvetica-Bold", 36)
-        c.drawString(self.MARGIN_X, self.PAGE_H - 85, "SECUREPATH")
+        # Top black band
+        c.setFillColor(self.BLACK)
+        c.rect(0, self.PAGE_H - 120, self.PAGE_W, 120, fill=1, stroke=0)
 
         c.setFillColor(self.WHITE)
-        c.setFont("Helvetica", 14)
-        c.drawString(
-            self.MARGIN_X,
-            self.PAGE_H - 110,
-            "Security Assessment & Compliance Evidence Report",
-        )
+        c.setFont("Helvetica-Bold", 32)
+        c.drawString(self.MARGIN_X, self.PAGE_H - 60, "SECUREPATH")
+        c.setFont("Helvetica", 12)
+        c.drawString(self.MARGIN_X, self.PAGE_H - 82, "Security Assessment & Compliance Evidence Report")
 
-        c.setStrokeColor(self.ACCENT_RED)
-        c.setLineWidth(2)
-        c.line(self.MARGIN_X, self.PAGE_H - 125, self.PAGE_W - self.MARGIN_X, self.PAGE_H - 125)
+        # Thin rule
+        c.setStrokeColor(self.BLACK)
+        c.setLineWidth(1.5)
+        c.line(self.MARGIN_X, self.PAGE_H - 140, self.PAGE_W - self.MARGIN_X, self.PAGE_H - 140)
 
+        # Repository name
         repo_name = str(scan.get("repo_name") or scan.get("repo_url") or "Unknown Repository")
         sha = str(scan.get("commit_sha") or "N/A")
-        c.setFillColor(self.WHITE)
-        c.setFont("Helvetica-Bold", 28)
-        c.drawCentredString(self.PAGE_W / 2, self.PAGE_H - 250, self._safe(repo_name, 60))
-        c.setFont(self.mono, 11)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 24)
+        c.drawCentredString(self.PAGE_W / 2, self.PAGE_H - 220, self._safe(repo_name, 60))
+        c.setFont(self.mono, 10)
         c.setFillColor(self.MID_GRAY)
-        c.drawCentredString(self.PAGE_W / 2, self.PAGE_H - 272, f"Commit: {sha[:12]}")
+        c.drawCentredString(self.PAGE_W / 2, self.PAGE_H - 240, f"Commit: {sha[:12]}")
 
-        top_y = 260
-        c.setFillColor(colors.HexColor("#11161f"))
-        c.roundRect(self.MARGIN_X, top_y, self.PAGE_W - (2 * self.MARGIN_X), 130, 8, fill=1, stroke=0)
+        # Metadata block
+        top_y = 340
+        c.setStrokeColor(self.RULE_GRAY)
+        c.setLineWidth(0.5)
+        c.rect(self.MARGIN_X, top_y, self.PAGE_W - (2 * self.MARGIN_X), 100, fill=0, stroke=1)
 
         labels = ["Scan Date", "Scan ID", "Scanner Version"]
         values = [
             datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
             str(scan.get("id", "N/A")),
-            "v0.1.0",
+            "v1.0.0",
         ]
-        left_x = self.MARGIN_X + 20
-        right_x = self.PAGE_W / 2 + 20
+        left_x = self.MARGIN_X + 16
+        right_x = self.PAGE_W / 2 + 16
         for i, lbl in enumerate(labels):
-            y = top_y + 95 - (i * 28)
+            y = top_y + 72 - (i * 26)
             c.setFillColor(self.MID_GRAY)
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 8.5)
             c.drawString(left_x, y, lbl)
-            c.setFillColor(self.WHITE)
+            c.setFillColor(self.BLACK)
             c.setFont("Helvetica-Bold", 10)
             c.drawString(right_x, y, values[i])
 
+        # Risk score
         score = int(scan.get("risk_score") or 0)
-        c.setFillColor(colors.HexColor("#11161f"))
-        c.roundRect(self.PAGE_W / 2 - 120, 125, 240, 115, 10, fill=1, stroke=0)
-        c.setFillColor(self._risk_color(score))
-        c.setFont("Helvetica-Bold", 72)
-        c.drawCentredString(self.PAGE_W / 2, 156, str(score))
+        c.setStrokeColor(self.BLACK)
+        c.setLineWidth(2)
+        c.rect(self.PAGE_W / 2 - 60, 200, 120, 100, fill=0, stroke=1)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 56)
+        c.drawCentredString(self.PAGE_W / 2, 230, str(score))
         c.setFillColor(self.MID_GRAY)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawCentredString(self.PAGE_W / 2, 136, "OVERALL RISK SCORE")
+        c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString(self.PAGE_W / 2, 210, "RISK SCORE")
 
+        # Severity counts
         counts = {
             "CRITICAL": int(scan.get("critical_count") or 0),
             "HIGH": int(scan.get("high_count") or 0),
             "MEDIUM": int(scan.get("medium_count") or 0),
             "LOW": int(scan.get("low_count") or 0),
         }
-        pill_y = 88
-        pill_w = (self.PAGE_W - (2 * self.MARGIN_X) - 24) / 4
+        pill_y = 160
+        total_w = self.PAGE_W - (2 * self.MARGIN_X)
+        pill_w = (total_w - 24) / 4
         for idx, (label, val) in enumerate(counts.items()):
             x = self.MARGIN_X + idx * (pill_w + 8)
-            clr = self._severity_color(label.lower())
-            c.setFillColor(clr)
-            c.roundRect(x, pill_y, pill_w, 28, 6, fill=1, stroke=0)
-            c.setFillColor(self.WHITE if label in {"CRITICAL", "HIGH"} else self.DARK_TEXT)
-            c.setFont("Helvetica-Bold", 9)
-            c.drawCentredString(x + pill_w / 2, pill_y + 10, f"{label}: {val}")
+            c.setFillColor(self._severity_bg(label.lower()))
+            c.roundRect(x, pill_y, pill_w, 26, 4, fill=1, stroke=0)
+            c.setFillColor(self.WHITE)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawCentredString(x + pill_w / 2, pill_y + 9, f"{label}: {val}")
 
-        self._draw_footer(c, 1, dark=True)
+        self._draw_footer(c, 1)
 
+    # ────────────────────────────────────────────────────────────────
+    # SECTION HEADER
+    # ────────────────────────────────────────────────────────────────
     def _draw_section_header(self, c: canvas.Canvas, title: str, y: float) -> None:
-        c.setFillColor(self.ACCENT_RED)
-        c.rect(self.MARGIN_X, y - 4, 6, 24, fill=1, stroke=0)
-        c.setFillColor(self.DARK_TEXT)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(self.MARGIN_X + 12, y, title)
+        c.setFillColor(self.BLACK)
+        c.rect(self.MARGIN_X, y - 4, 4, 22, fill=1, stroke=0)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(self.MARGIN_X + 10, y, title)
 
+    # ────────────────────────────────────────────────────────────────
+    # EXECUTIVE SUMMARY
+    # ────────────────────────────────────────────────────────────────
     def _draw_executive_summary(self, c: canvas.Canvas, scan: dict, findings: list[dict]) -> None:
         c.setFillColor(self.WHITE)
         c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
@@ -250,8 +265,9 @@ class AuditReportGenerator:
         )
         p = Paragraph(narrative, self.body)
         p.wrapOn(c, self.PAGE_W * 0.56, 90)
-        p.drawOn(c, self.MARGIN_X, self.PAGE_H - 150)
+        p.drawOn(c, self.MARGIN_X, self.PAGE_H - 148)
 
+        # OWASP table
         left_x = self.MARGIN_X
         left_w = self.PAGE_W * 0.57 - self.MARGIN_X
         top10 = [
@@ -269,37 +285,41 @@ class AuditReportGenerator:
         owasp_present = {str(f.get("owasp_category", "")) for f in findings}
         owasp_data = [["Category", "Status"]]
         for cat in top10:
-            owasp_data.append([cat, "FOUND" if cat in owasp_present else "CLEAN"])
-        table = Table(owasp_data, colWidths=[left_w * 0.75, left_w * 0.25], rowHeights=18)
+            owasp_data.append([cat, "FOUND" if cat in owasp_present else "—"])
+        table = Table(owasp_data, colWidths=[left_w * 0.78, left_w * 0.22], rowHeights=17)
         ts = TableStyle(
             [
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
                 ("TEXTCOLOR", (0, 0), (-1, 0), self.WHITE),
-                ("BACKGROUND", (0, 0), (-1, 0), self.DARK_BG),
-                ("GRID", (0, 0), (-1, -1), 0.25, self.BORDER),
+                ("BACKGROUND", (0, 0), (-1, 0), self.BLACK),
+                ("GRID", (0, 0), (-1, -1), 0.25, self.RULE_GRAY),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ]
         )
         for i in range(1, len(owasp_data)):
             status = owasp_data[i][1]
             if status == "FOUND":
-                ts.add("TEXTCOLOR", (1, i), (1, i), self.CRITICAL)
                 ts.add("FONTNAME", (1, i), (1, i), "Helvetica-Bold")
+                ts.add("TEXTCOLOR", (1, i), (1, i), self.BLACK)
             else:
-                ts.add("TEXTCOLOR", (1, i), (1, i), self.LOW)
-                ts.add("FONTNAME", (1, i), (1, i), "Helvetica-Bold")
+                ts.add("TEXTCOLOR", (1, i), (1, i), self.LIGHT_GRAY)
+            if i % 2 == 0:
+                ts.add("BACKGROUND", (0, i), (-1, i), self.BG_LIGHT)
         table.setStyle(ts)
         table.wrapOn(c, left_w, 220)
-        table.drawOn(c, left_x, self.PAGE_H - 430)
+        table.drawOn(c, left_x, self.PAGE_H - 400)
 
+        # Right side — Severity breakdown
         right_x = self.PAGE_W * 0.62
         right_w = self.PAGE_W - right_x - self.MARGIN_X
-        c.setFillColor(colors.HexColor("#111827"))
-        c.roundRect(right_x, self.PAGE_H - 260, right_w, 160, 6, fill=1, stroke=0)
-        c.setFillColor(self.WHITE)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(right_x + 14, self.PAGE_H - 118, "SEVERITY BREAKDOWN")
+
+        c.setStrokeColor(self.RULE_GRAY)
+        c.setLineWidth(0.5)
+        c.rect(right_x, self.PAGE_H - 250, right_w, 150, fill=0, stroke=1)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(right_x + 12, self.PAGE_H - 118, "SEVERITY BREAKDOWN")
 
         breakdown = [
             ("critical", int(scan.get("critical_count") or 0)),
@@ -307,80 +327,101 @@ class AuditReportGenerator:
             ("medium", int(scan.get("medium_count") or 0)),
             ("low", int(scan.get("low_count") or 0)),
         ]
-        y = self.PAGE_H - 142
+        y = self.PAGE_H - 140
         for sev, cnt in breakdown:
             pct = f"{int((cnt / total) * 100) if total else 0}%"
-            c.setFillColor(self._severity_color(sev))
-            c.rect(right_x + 14, y - 8, 8, 8, fill=1, stroke=0)
-            c.setFillColor(self.WHITE)
-            c.setFont("Helvetica", 9)
-            c.drawString(right_x + 28, y - 8, sev.upper())
-            c.drawRightString(right_x + right_w - 14, y - 8, f"{cnt} ({pct})")
+            c.setFillColor(self._severity_bg(sev))
+            c.rect(right_x + 12, y - 6, 8, 8, fill=1, stroke=0)
+            c.setFillColor(self.NEAR_BLACK)
+            c.setFont("Helvetica-Bold", 8.5)
+            c.drawString(right_x + 26, y - 6, sev.upper())
+            c.setFont("Helvetica", 8.5)
+            c.drawRightString(right_x + right_w - 12, y - 6, f"{cnt} ({pct})")
             y -= 20
 
-        c.setFillColor(self.LIGHT_GRAY)
-        c.roundRect(right_x, self.PAGE_H - 470, right_w, 180, 6, fill=1, stroke=0)
-        c.setFillColor(self.DARK_TEXT)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(right_x + 12, self.PAGE_H - 308, "TOP 3 CRITICAL FINDINGS")
+        # Top 3 Critical Findings
+        c.setStrokeColor(self.RULE_GRAY)
+        c.setLineWidth(0.5)
+        c.rect(right_x, self.PAGE_H - 440, right_w, 160, fill=0, stroke=1)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(right_x + 12, self.PAGE_H - 300, "TOP CRITICAL FINDINGS")
         criticals = [f for f in findings if str(f.get("severity", "")).lower() == "critical"][:3]
-        yy = self.PAGE_H - 328
+        yy = self.PAGE_H - 318
         for f in criticals:
-            title = self._safe(f.get("raw_title"), 58, "Untitled finding")
-            impact = self._safe(f.get("business_risk"), 80, "Business impact pending enrichment")
-            sev = self._safe(f.get("severity"), 20, "critical").upper()
-            path = self._safe(f.get("file_path"), 50, "unknown")
+            title = self._safe(f.get("raw_title"), 52, "Untitled finding")
+            path = self._safe(f.get("file_path"), 44, "unknown")
             line = self._safe(f.get("line_start"), 10, "1")
-            c.setFillColor(self.CRITICAL)
-            c.roundRect(right_x + 12, yy - 4, 54, 12, 3, fill=1, stroke=0)
-            c.setFillColor(self.WHITE)
-            c.setFont("Helvetica-Bold", 7)
-            c.drawCentredString(right_x + 39, yy - 1, sev)
-            c.setFillColor(self.DARK_TEXT)
-            c.setFont("Helvetica-Bold", 8.5)
-            c.drawString(right_x + 72, yy, title)
-            c.setFont(self.mono, 7.2)
-            c.setFillColor(colors.HexColor("#4b5563"))
-            c.drawString(right_x + 72, yy - 11, f"File: {path} (line {line})")
-            c.setFont("Helvetica", 7.5)
-            c.drawString(right_x + 72, yy - 21, f"Impact: {impact}")
-            yy -= 44
+            sev = self._safe(f.get("severity"), 20, "critical").upper()
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(right_x + 12, yy, f"■ {sev}")
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(right_x + 62, yy, title)
+            c.setFont(self.mono, 7)
+            c.setFillColor(self.MID_GRAY)
+            c.drawString(right_x + 62, yy - 10, f"{path}:{line}")
+            yy -= 30
 
+        # SOC2 Controls
         control_set: set[str] = set()
         for f in findings:
             controls, _ = self._controls_for_finding(f)
             for ctl in controls:
                 if ctl:
                     control_set.add(ctl)
-        controls = sorted(control_set)
-        c.setFont("Helvetica-Bold", 10)
-        c.setFillColor(self.DARK_TEXT)
-        c.drawString(self.MARGIN_X, 118, "SOC2 CONTROLS AFFECTED")
+        controls_sorted = sorted(control_set)
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(self.BLACK)
+        c.drawString(self.MARGIN_X, 110, "RELEVANT COMPLIANCE CONTROLS")
         bx = self.MARGIN_X
-        by = 96
-        for ctl in controls[:10]:
-            tw = pdfmetrics.stringWidth(ctl, "Helvetica-Bold", 8) + 18
-            c.setFillColor(colors.HexColor("#fee2e2"))
-            c.roundRect(bx, by, tw, 16, 4, fill=1, stroke=0)
-            c.setFillColor(colors.HexColor("#991b1b"))
-            c.setFont("Helvetica-Bold", 8)
-            c.drawCentredString(bx + tw / 2, by + 4.7, ctl)
-            bx += tw + 8
-            if bx > self.PAGE_W - self.MARGIN_X - 90:
+        by = 90
+        for ctl in controls_sorted[:12]:
+            tw = pdfmetrics.stringWidth(ctl, "Helvetica-Bold", 7.5) + 14
+            c.setStrokeColor(self.BLACK)
+            c.setLineWidth(0.8)
+            c.roundRect(bx, by, tw, 15, 3, fill=0, stroke=1)
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 7.5)
+            c.drawCentredString(bx + tw / 2, by + 4.5, ctl)
+            bx += tw + 6
+            if bx > self.PAGE_W - self.MARGIN_X - 80:
                 bx = self.MARGIN_X
                 by -= 20
 
-        self._draw_footer(c, 2, dark=False)
+        self._draw_footer(c, 2)
 
-    def _draw_badge(self, c: canvas.Canvas, x: float, y: float, text: str, bg: colors.Color, fg: colors.Color = WHITE) -> None:
-        w = pdfmetrics.stringWidth(text, "Helvetica-Bold", 8) + 14
+    # ────────────────────────────────────────────────────────────────
+    # HELPERS
+    # ────────────────────────────────────────────────────────────────
+    def _draw_badge(self, c: canvas.Canvas, x: float, y: float, text: str,
+                    bg: colors.Color, fg: colors.Color = None) -> float:
+        if fg is None:
+            fg = self.WHITE
+        w = pdfmetrics.stringWidth(text, "Helvetica-Bold", 7.5) + 12
         c.setFillColor(bg)
-        c.roundRect(x, y, w, 14, 4, fill=1, stroke=0)
+        c.roundRect(x, y, w, 14, 3, fill=1, stroke=0)
         c.setFillColor(fg)
-        c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(x + w / 2, y + 4.6, text)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(x + w / 2, y + 4, text)
+        return w
 
-    def _draw_wrapped_text(self, c: canvas.Canvas, text: str, x: float, y: float, width: float, font: str, size: float, leading: float, color: colors.Color) -> float:
+    def _draw_outline_badge(self, c: canvas.Canvas, x: float, y: float, text: str,
+                            border: colors.Color = None) -> float:
+        if border is None:
+            border = self.BLACK
+        w = pdfmetrics.stringWidth(text, "Helvetica-Bold", 7.5) + 12
+        c.setStrokeColor(border)
+        c.setLineWidth(0.8)
+        c.roundRect(x, y, w, 14, 3, fill=0, stroke=1)
+        c.setFillColor(self.NEAR_BLACK)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(x + w / 2, y + 4, text)
+        return w
+
+    def _draw_wrapped_text(self, c: canvas.Canvas, text: str, x: float, y: float,
+                           width: float, font: str, size: float, leading: float,
+                           color: colors.Color) -> float:
         c.setFont(font, size)
         c.setFillColor(color)
         lines = simpleSplit(text, font, size, width)
@@ -411,6 +452,22 @@ class AuditReportGenerator:
             wrapped.append(current)
         return wrapped or [""]
 
+    def _parse_impact_json(self, finding: dict, field: str) -> dict:
+        """Safely parse a JSON field from a finding, returning {} on failure."""
+        raw = finding.get(field)
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    # ────────────────────────────────────────────────────────────────
+    # FINDING PAGE
+    # ────────────────────────────────────────────────────────────────
     def _draw_finding_page(self, c: canvas.Canvas, finding: dict, idx: int) -> None:
         c.setFillColor(self.WHITE)
         c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
@@ -420,116 +477,198 @@ class AuditReportGenerator:
         cwe = self._safe(finding.get("cwe_id"), 40, "Unknown")
         owasp = self._safe(finding.get("owasp_category"), 40, "Unknown")
 
-        c.setFillColor(self.DARK_BG)
-        c.rect(0, self.PAGE_H - 66, self.PAGE_W, 66, fill=1, stroke=0)
+        # Black title bar
+        c.setFillColor(self.BLACK)
+        c.rect(0, self.PAGE_H - 56, self.PAGE_W, 56, fill=1, stroke=0)
         c.setFillColor(self.WHITE)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(self.MARGIN_X, self.PAGE_H - 38, f"{idx:02d}  {title[:74]}")
-        # Keep header clean; draw severity/CWE/OWASP badges below the black title bar to avoid overlap.
-        badge_y = self.PAGE_H - 84
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(self.MARGIN_X, self.PAGE_H - 36, f"{idx:02d}  {title[:74]}")
+
+        # Badges below title bar
+        badge_y = self.PAGE_H - 74
         badge_x = self.MARGIN_X
-        self._draw_badge(
-            c,
-            badge_x,
-            badge_y,
-            sev.upper(),
-            self._severity_color(sev),
-            self.WHITE if sev in {"critical", "high"} else self.DARK_TEXT,
-        )
-        badge_x += pdfmetrics.stringWidth(sev.upper(), "Helvetica-Bold", 8) + 24
-        self._draw_badge(c, badge_x, badge_y, cwe, colors.HexColor("#374151"))
-        badge_x += pdfmetrics.stringWidth(cwe, "Helvetica-Bold", 8) + 24
-        self._draw_badge(c, badge_x, badge_y, owasp[:24], self.ACCENT_BLUE)
+        w = self._draw_badge(c, badge_x, badge_y, sev.upper(), self._severity_bg(sev))
+        badge_x += w + 6
+        w = self._draw_badge(c, badge_x, badge_y, cwe, self.DARK_GRAY)
+        badge_x += w + 6
+        self._draw_badge(c, badge_x, badge_y, owasp[:28], self.MID_GRAY)
 
+        # Layout columns
         left_x = self.MARGIN_X
-        left_w = (self.PAGE_W - (2 * self.MARGIN_X)) * 0.55
-        right_x = left_x + left_w + 18
+        left_w = (self.PAGE_W - (2 * self.MARGIN_X)) * 0.52
+        right_x = left_x + left_w + 14
         right_w = self.PAGE_W - self.MARGIN_X - right_x
-        y = self.PAGE_H - 108
+        y = self.PAGE_H - 96
 
-        # Business risk starts first in left column; EXAI explanation appears in a dedicated center block below code location.
-        c.setFillColor(colors.HexColor("#fff7ed"))
-        c.roundRect(left_x, y - 82, left_w, 80, 6, fill=1, stroke=0)
-        c.setFillColor(colors.HexColor("#9a3412"))
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(left_x + 10, y - 16, "BUSINESS RISK")
+        # ── LEFT COLUMN ──
+
+        # AI Explanation
+        c.setFillColor(self.BG_LIGHT)
+        c.roundRect(left_x, y - 56, left_w, 54, 4, fill=1, stroke=0)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(left_x + 8, y - 12, "FINDING EXPLANATION")
         self._draw_wrapped_text(
-            c,
-            str(finding.get("business_risk", "Business risk pending enrichment.")),
-            left_x + 10,
-            y - 30,
-            left_w - 20,
-            "Helvetica",
-            9.5,
-            12,
-            self.DARK_TEXT,
+            c, str(finding.get("plain_english", "Explanation unavailable.")),
+            left_x + 8, y - 26, left_w - 16, "Helvetica", 8.5, 11, self.NEAR_BLACK,
         )
 
-        y -= 98
-        c.setStrokeColor(self.CRITICAL)
-        c.setLineWidth(2.4)
-        c.line(left_x, y - 2, left_x, y - 84)
-        c.setFillColor(self.CRITICAL)
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(left_x + 8, y - 14, "EXPLOIT SCENARIO")
+        y -= 68
+
+        # Business Risk
+        c.setStrokeColor(self.BLACK)
+        c.setLineWidth(1.5)
+        c.line(left_x, y, left_x, y - 54)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(left_x + 6, y - 10, "BUSINESS RISK")
         self._draw_wrapped_text(
-            c,
-            str(finding.get("exploit_scenario", "Exploit scenario pending enrichment.")),
-            left_x + 8,
-            y - 28,
-            left_w - 10,
-            "Helvetica-Oblique",
-            9.5,
-            12,
-            self.DARK_TEXT,
+            c, str(finding.get("business_risk", "Business risk pending.")),
+            left_x + 6, y - 24, left_w - 10, "Helvetica", 8.5, 11, self.NEAR_BLACK,
         )
 
-        y -= 106
-        c.setFillColor(self.ACCENT_BLUE)
-        c.setFont("Helvetica-Bold", 8)
+        y -= 68
+
+        # Exploit Scenario
+        c.setStrokeColor(self.DARK_GRAY)
+        c.setLineWidth(1)
+        c.line(left_x, y, left_x, y - 54)
+        c.setFillColor(self.DARK_GRAY)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(left_x + 6, y - 10, "EXPLOIT SCENARIO")
+        self._draw_wrapped_text(
+            c, str(finding.get("exploit_scenario", "Exploit scenario pending.")),
+            left_x + 6, y - 24, left_w - 10, "Helvetica-Oblique", 8.5, 11, self.DARK_GRAY,
+        )
+
+        y -= 66
+
+        # Code Location
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7.5)
         c.drawString(left_x, y, "CODE LOCATION")
-        c.setFillColor(colors.HexColor("#374151"))
-        c.setFont(self.mono, 8.2)
+        c.setFillColor(self.MID_GRAY)
+        c.setFont(self.mono, 7.5)
         fp = self._safe(finding.get("file_path"), 60, "unknown")
         ln_s = self._safe(finding.get("line_start"), 10, "1")
         ln_e = self._safe(finding.get("line_end"), 10, "1")
-        c.drawString(left_x, y - 14, f"{fp}:{ln_s}-{ln_e}")
+        c.drawString(left_x, y - 12, f"{fp}:{ln_s}-{ln_e}")
+
         snippet = self._safe(finding.get("code_snippet"), 500, "No snippet available.")
-        c.setFillColor(self.LIGHT_GRAY)
-        c.roundRect(left_x, y - 130, left_w, 106, 6, fill=1, stroke=0)
-        lines = snippet.splitlines()[:7]
+        c.setFillColor(self.BG_LIGHT)
+        c.roundRect(left_x, y - 90, left_w, 70, 4, fill=1, stroke=0)
+        lines = snippet.splitlines()[:5]
         wrapped_code_lines: list[str] = []
         for line in lines:
-            wrapped_parts = simpleSplit(str(line), self.mono, 7.6, left_w - 16)
+            wrapped_parts = simpleSplit(str(line), self.mono, 7, left_w - 14)
             if wrapped_parts:
                 for part in wrapped_parts:
-                    # Force wrap for long unbroken strings inside each already-split part.
                     wrapped_code_lines.extend(
-                        self._hard_wrap_mono_line(part, self.mono, 7.6, left_w - 16)
+                        self._hard_wrap_mono_line(part, self.mono, 7, left_w - 14)
                     )
             else:
                 wrapped_code_lines.extend(
-                    self._hard_wrap_mono_line(str(line), self.mono, 7.6, left_w - 16)
+                    self._hard_wrap_mono_line(str(line), self.mono, 7, left_w - 14)
                 )
-        sy = y - 40
-        for line in wrapped_code_lines[:8]:
-            c.setFillColor(colors.HexColor("#111827"))
-            c.setFont(self.mono, 7.6)
-            c.drawString(left_x + 8, sy, line)
-            sy -= 12
+        sy = y - 28
+        for line in wrapped_code_lines[:6]:
+            c.setFillColor(self.NEAR_BLACK)
+            c.setFont(self.mono, 7)
+            c.drawString(left_x + 7, sy, line)
+            sy -= 10
 
-        ry = self.PAGE_H - 118
-        c.setFillColor(self.ACCENT_BLUE)
+        # ── BUSINESS IMPACT SECTION (below code, spanning left column) ──
+        bi = self._parse_impact_json(finding, "business_impact_json")
+        if not bi:
+            bi = self._parse_impact_json(finding, "business_impact")
+
+        bi_y = y - 108
+
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(left_x, bi_y, "BUSINESS IMPACT")
+        c.setStrokeColor(self.BLACK)
+        c.setLineWidth(0.5)
+        c.line(left_x, bi_y - 4, left_x + left_w, bi_y - 4)
+
+        # Financial Exposure
+        fin_exp = str(bi.get("financial_exposure", "Financial exposure data unavailable."))
+        c.setFillColor(self.BG_ALT)
+        c.roundRect(left_x, bi_y - 42, left_w, 34, 4, fill=1, stroke=0)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(left_x + 6, bi_y - 14, "FINANCIAL EXPOSURE")
+        self._draw_wrapped_text(
+            c, fin_exp, left_x + 6, bi_y - 26,
+            left_w - 12, "Helvetica", 7.5, 9.5, self.NEAR_BLACK,
+        )
+
+        # Exploitation Likelihood badge
+        likelihood = str(bi.get("exploitation_likelihood", "medium")).lower()
+        likelihood_reason = str(bi.get("likelihood_reason", ""))
+        lk_y = bi_y - 54
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(left_x, lk_y, "EXPLOITATION LIKELIHOOD:")
+        lk_bg = {"high": self.BLACK, "medium": self.MID_GRAY, "low": self.LIGHT_GRAY}.get(likelihood, self.MID_GRAY)
+        bw = self._draw_badge(c, left_x + 110, lk_y - 2, likelihood.upper(), lk_bg)
+        if likelihood_reason:
+            c.setFillColor(self.MID_GRAY)
+            c.setFont("Helvetica-Oblique", 7)
+            reason_lines = simpleSplit(likelihood_reason, "Helvetica-Oblique", 7, left_w - 12)
+            ry = lk_y - 14
+            for rl in reason_lines[:2]:
+                c.drawString(left_x, ry, rl)
+                ry -= 9
+
+        # Compliance Violations mini-table
+        violations = bi.get("compliance_violations", [])
+        if isinstance(violations, list) and violations:
+            cv_y = lk_y - 32
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(left_x, cv_y, "COMPLIANCE VIOLATIONS")
+            cv_y -= 4
+
+            tbl_data = [["Framework", "Control", "Implication"]]
+            for v in violations[:4]:
+                if isinstance(v, dict):
+                    tbl_data.append([
+                        str(v.get("framework", ""))[:10],
+                        str(v.get("control", ""))[:12],
+                        str(v.get("meaning", ""))[:60],
+                    ])
+            if len(tbl_data) > 1:
+                col_ws = [50, 50, left_w - 106]
+                tbl = Table(tbl_data, colWidths=col_ws, rowHeights=13)
+                tbl_style = TableStyle([
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), self.WHITE),
+                    ("BACKGROUND", (0, 0), (-1, 0), self.BLACK),
+                    ("GRID", (0, 0), (-1, -1), 0.2, self.RULE_GRAY),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ])
+                for ri in range(1, len(tbl_data)):
+                    if ri % 2 == 0:
+                        tbl_style.add("BACKGROUND", (0, ri), (-1, ri), self.BG_LIGHT)
+                tbl.setStyle(tbl_style)
+                tbl.wrapOn(c, left_w, 80)
+                tbl.drawOn(c, left_x, cv_y - len(tbl_data) * 13)
+
+        # ── RIGHT COLUMN ──
+        ry = self.PAGE_H - 96
+
+        # Remediation Options
+        c.setFillColor(self.BLACK)
         c.setFont("Helvetica-Bold", 8)
         c.drawString(right_x, ry, "REMEDIATION OPTIONS")
-        ry -= 14
+        ry -= 12
         remediation = finding.get("remediation_json")
         if not remediation:
             remediation = finding.get("remediation", [])
         if isinstance(remediation, str):
             try:
-                import json
-
                 remediation = json.loads(remediation)
             except Exception:
                 remediation = []
@@ -547,116 +686,151 @@ class AuditReportGenerator:
             ] * (3 - len(remediation))
 
         for i, opt in enumerate(remediation[:3], start=1):
-            box_h = 110
-            c.setFillColor(colors.HexColor("#f8fafc"))
-            c.roundRect(right_x, ry - box_h, right_w, box_h - 6, 6, fill=1, stroke=0)
-            c.setFillColor(self.DARK_TEXT)
-            c.setFont("Helvetica-Bold", 9)
-            c.drawString(right_x + 8, ry - 16, f"OPTION {i}: {str(opt.get('label', 'Fix')).upper()[:22]}")
+            box_h = 84
+            c.setFillColor(self.BG_LIGHT)
+            c.roundRect(right_x, ry - box_h, right_w, box_h - 4, 4, fill=1, stroke=0)
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(right_x + 6, ry - 12, f"OPTION {i}: {str(opt.get('label', 'Fix')).upper()[:20]}")
             est = str(opt.get("time_estimate", ""))
-            self._draw_badge(c, right_x + right_w - 72, ry - 22, est, colors.HexColor("#e5e7eb"), self.DARK_TEXT)
+            self._draw_outline_badge(c, right_x + right_w - 60, ry - 16, est)
             self._draw_wrapped_text(
-                c,
-                str(opt.get("description", "")),
-                right_x + 8,
-                ry - 34,
-                right_w - 16,
-                "Helvetica",
-                8.2,
-                10,
-                self.DARK_TEXT,
+                c, str(opt.get("description", "")),
+                right_x + 6, ry - 28, right_w - 12, "Helvetica", 7.5, 9.5, self.NEAR_BLACK,
             )
             self._draw_wrapped_text(
-                c,
-                f"Tradeoff: {str(opt.get('tradeoff', ''))}",
-                right_x + 8,
-                ry - 84,
-                right_w - 16,
-                "Helvetica-Oblique",
-                7.6,
-                9.5,
-                colors.HexColor("#6b7280"),
+                c, f"Tradeoff: {str(opt.get('tradeoff', ''))}",
+                right_x + 6, ry - 66, right_w - 12, "Helvetica-Oblique", 7, 9, self.MID_GRAY,
             )
-            ry -= box_h + 6
+            ry -= box_h + 3
 
-        c.setFillColor(self.ACCENT_BLUE)
+        # Compliance Mapping
+        c.setFillColor(self.BLACK)
         c.setFont("Helvetica-Bold", 8)
-        c.drawString(right_x, 180, "COMPLIANCE MAPPING")
+        c.drawString(right_x, ry, "COMPLIANCE MAPPING")
         controls_list, rationale_map = self._controls_for_finding(finding)
         bx = right_x
-        by = 164
+        by_ctl = ry - 14
         for ctl in controls_list[:6]:
-            self._draw_badge(c, bx, by, ctl, colors.HexColor("#fee2e2"), colors.HexColor("#991b1b"))
-            bx += 62
-            if bx > right_x + right_w - 58:
+            w = self._draw_outline_badge(c, bx, by_ctl, ctl)
+            bx += w + 4
+            if bx > right_x + right_w - 50:
                 bx = right_x
-                by -= 18
+                by_ctl -= 16
 
-        c.setFillColor(self.DARK_TEXT)
-        c.setFont("Helvetica", 8.2)
-        c.drawString(right_x, 126, f"CWE: {cwe}")
-        c.drawString(right_x, 114, f"OWASP: {owasp}")
+        # CWE / OWASP / Confidence
+        info_y = by_ctl - 16
+        c.setFillColor(self.NEAR_BLACK)
+        c.setFont("Helvetica", 7.5)
+        c.drawString(right_x, info_y, f"CWE: {cwe}")
+        c.drawString(right_x, info_y - 11, f"OWASP: {owasp}")
 
         conf = int(finding.get("confidence_score") or 0)
         conf = max(0, min(10, conf))
-        c.drawString(right_x, 100, f"Confidence: {conf}/10")
-        bar_x, bar_y = right_x + 64, 96
-        c.setStrokeColor(colors.HexColor("#d1d5db"))
-        c.rect(bar_x, bar_y, 80, 8, fill=0, stroke=1)
-        c.setFillColor(colors.HexColor("#059669"))
-        c.rect(bar_x, bar_y, 8 * conf, 8, fill=1, stroke=0)
+        c.drawString(right_x, info_y - 22, f"Confidence: {conf}/10")
+        bar_x = right_x + 55
+        bar_y = info_y - 26
+        c.setStrokeColor(self.RULE_GRAY)
+        c.setLineWidth(0.5)
+        c.rect(bar_x, bar_y, 70, 7, fill=0, stroke=1)
+        c.setFillColor(self.BLACK)
+        c.rect(bar_x, bar_y, 7 * conf, 7, fill=1, stroke=0)
 
+        # False Positive
         fp = str(finding.get("false_positive_risk", "medium")).upper()
-        fp_color = {"LOW": self.LOW, "MEDIUM": self.MEDIUM, "HIGH": self.CRITICAL}.get(fp, self.MID_GRAY)
-        self._draw_badge(c, right_x, 78, f"False Positive: {fp}", fp_color, self.DARK_TEXT if fp == "MEDIUM" else self.WHITE)
-        fp_reason = self._safe(finding.get("false_positive_reason"), 200, "No justification provided.")
-        self._draw_wrapped_text(c, fp_reason, right_x, 64, right_w, "Helvetica", 7.7, 9.5, colors.HexColor("#4b5563"))
-        if controls_list:
-            first_ctl = controls_list[0]
-            rationale_text = rationale_map.get(first_ctl, "")
-            if rationale_text:
-                self._draw_wrapped_text(
-                    c,
-                    f"{first_ctl} rationale: {rationale_text}",
-                    right_x,
-                    44,
-                    right_w,
-                    "Helvetica-Oblique",
-                    7.2,
-                    9,
-                    colors.HexColor("#6b7280"),
-                )
+        fp_y = info_y - 38
+        self._draw_badge(c, right_x, fp_y, f"FP Risk: {fp}", self.MID_GRAY)
+        fp_reason = self._safe(finding.get("false_positive_reason"), 180, "")
+        if fp_reason:
+            self._draw_wrapped_text(c, fp_reason, right_x, fp_y - 14, right_w, "Helvetica", 7, 8.5, self.LIGHT_GRAY)
 
-        # Centered EXAI explanation block below code location, kept in content area for visibility.
-        exai_x = self.MARGIN_X
-        exai_w = self.PAGE_W - (2 * self.MARGIN_X)
-        exai_y = 238
-        exai_h = 94
-        c.setFillColor(colors.HexColor("#eef6ff"))
-        c.roundRect(exai_x, exai_y, exai_w, exai_h, 8, fill=1, stroke=0)
-        c.setFillColor(self.ACCENT_BLUE)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(exai_x + 12, exai_y + exai_h - 16, "EXAI EXPLANATION")
-        self._draw_wrapped_text(
-            c,
-            str(finding.get("plain_english", "EXAI explanation unavailable.")),
-            exai_x + 12,
-            exai_y + exai_h - 32,
-            exai_w - 24,
-            "Helvetica",
-            10.2,
-            12.5,
-            self.DARK_TEXT,
-        )
+        # ── ASSETS EXPOSED SECTION (bottom of right column) ──
+        ae = self._parse_impact_json(finding, "assets_exposed_json")
+        if not ae:
+            ae = self._parse_impact_json(finding, "assets_exposed")
 
-        self._draw_footer(c, 2 + idx, dark=False)
+        ae_y = fp_y - 36
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(right_x, ae_y, "ASSETS EXPOSED")
+        c.setStrokeColor(self.BLACK)
+        c.setLineWidth(0.5)
+        c.line(right_x, ae_y - 4, right_x + right_w, ae_y - 4)
 
+        # Data types as tags
+        data_types = ae.get("data_types", [])
+        if isinstance(data_types, list) and data_types:
+            ae_y -= 14
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(right_x, ae_y, "DATA AT RISK:")
+            tag_x = right_x
+            tag_y = ae_y - 12
+            for dt in data_types[:5]:
+                w = self._draw_outline_badge(c, tag_x, tag_y, str(dt)[:20])
+                tag_x += w + 3
+                if tag_x > right_x + right_w - 40:
+                    tag_x = right_x
+                    tag_y -= 14
+
+        # Systems affected
+        systems = ae.get("systems_affected", [])
+        if isinstance(systems, list) and systems:
+            sy = tag_y - 14 if data_types else ae_y - 14
+            c.setFillColor(self.BLACK)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(right_x, sy, "SYSTEMS:")
+            c.setFont("Helvetica", 7)
+            c.setFillColor(self.NEAR_BLACK)
+            for s in systems[:4]:
+                sy -= 10
+                c.drawString(right_x + 4, sy, f"· {str(s)[:40]}")
+
+        # Exposure scope badge
+        scope = str(ae.get("exposure_scope", "unknown")).lower()
+        scope_labels = {
+            "external_facing": "EXTERNAL",
+            "third_party_accessible": "THIRD PARTY",
+            "internal_only": "INTERNAL",
+        }
+        scope_bgs = {
+            "external_facing": self.BLACK,
+            "third_party_accessible": self.MID_GRAY,
+            "internal_only": self.LIGHT_GRAY,
+        }
+        scope_y = sy - 14 if systems else (tag_y - 14 if data_types else ae_y - 14)
+        c.setFillColor(self.BLACK)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(right_x, scope_y, "SCOPE:")
+        scope_bg = scope_bgs.get(scope, self.MID_GRAY)
+        self._draw_badge(c, right_x + 34, scope_y - 2, scope_labels.get(scope, scope.upper()), scope_bg)
+
+        # Exposure explanation
+        exp_text = str(ae.get("exposure_explanation", ""))
+        if exp_text:
+            self._draw_wrapped_text(
+                c, exp_text, right_x, scope_y - 16, right_w,
+                "Helvetica", 7, 8.5, self.MID_GRAY,
+            )
+
+        # Records at risk
+        records = str(ae.get("estimated_records_at_risk", "unknown"))
+        if records and records != "unknown":
+            c.setFillColor(self.NEAR_BLACK)
+            c.setFont("Helvetica", 7)
+            c.drawString(right_x, scope_y - 34, f"Est. records at risk: {records}")
+
+        self._draw_footer(c, 2 + idx)
+
+    # ────────────────────────────────────────────────────────────────
+    # ADDITIONAL FINDINGS TABLE
+    # ────────────────────────────────────────────────────────────────
     def _draw_additional_findings_table(self, c: canvas.Canvas, findings: list[dict], page_offset: int = 0) -> None:
         # Include medium, low, and info — not just medium/low
         filtered = [f for f in findings if str(f.get("severity", "")).lower() in {"medium", "low", "info"}]
-        ROW_H = 18
-        USABLE_H = self.PAGE_H - 140  # space between top header and footer safe zone
-        MAX_ROWS_PER_PAGE = int(USABLE_H / ROW_H) - 2  # subtract header row
+        ROW_H = 17
+        USABLE_H = self.PAGE_H - 140
+        MAX_ROWS_PER_PAGE = int(USABLE_H / ROW_H) - 2
 
         rows_all = []
         for i, f in enumerate(filtered, start=1):
@@ -672,7 +846,6 @@ class AuditReportGenerator:
             ])
 
         header = ["#", "Severity", "Category", "File", "Line", "Title", "Compliance", "Status"]
-        # Reduce column widths so total is < 519 (PAGE_W - 2 * MARGIN_X)
         col_widths = [18, 48, 54, 100, 26, 116, 75, 82]
 
         page_num = page_offset
@@ -683,17 +856,17 @@ class AuditReportGenerator:
             c.setFillColor(self.WHITE)
             c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
             title_sfx = f" (cont. {page_num})" if chunk_start > 0 else ""
-            self._draw_section_header(c, f"ADDITIONAL FINDINGS \u2014 MEDIUM & LOW SEVERITY{title_sfx}", self.PAGE_H - 64)
+            self._draw_section_header(c, f"ADDITIONAL FINDINGS{title_sfx}", self.PAGE_H - 64)
 
             table_rows = [header] + chunk
             table = Table(table_rows, colWidths=col_widths, repeatRows=1, rowHeights=ROW_H)
             style = TableStyle(
                 [
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7.6),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
                     ("TEXTCOLOR", (0, 0), (-1, 0), self.WHITE),
-                    ("BACKGROUND", (0, 0), (-1, 0), self.DARK_BG),
-                    ("GRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#d1d5db")),
+                    ("BACKGROUND", (0, 0), (-1, 0), self.BLACK),
+                    ("GRID", (0, 0), (-1, -1), 0.2, self.RULE_GRAY),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("ALIGN", (0, 0), (0, -1), "CENTER"),
                     ("ALIGN", (4, 1), (4, -1), "CENTER"),
@@ -701,48 +874,52 @@ class AuditReportGenerator:
             )
             for i in range(1, len(table_rows)):
                 if i % 2 == 0:
-                    style.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f9fafb"))
-                sev = table_rows[i][1].lower()
-                style.add("TEXTCOLOR", (1, i), (1, i), self._severity_color(sev))
+                    style.add("BACKGROUND", (0, i), (-1, i), self.BG_LIGHT)
                 style.add("FONTNAME", (1, i), (1, i), "Helvetica-Bold")
-                style.add("TEXTCOLOR", (7, i), (7, i), colors.HexColor("#b91c1c"))
                 style.add("FONTNAME", (7, i), (7, i), "Helvetica-Bold")
             table.setStyle(style)
             w, h = table.wrapOn(c, self.PAGE_W - (2 * self.MARGIN_X), USABLE_H)
             table.drawOn(c, self.MARGIN_X, self.PAGE_H - 80 - h)
-            self._draw_footer(c, 2 + self.finding_counter + page_num, dark=False)
+            self._draw_footer(c, 2 + self.finding_counter + page_num)
             if chunk_start + MAX_ROWS_PER_PAGE < len(rows_all):
                 c.showPage()
 
-        self._extra_pages = page_num  # track for integrity page numbering
+        self._extra_pages = page_num
 
+    # ────────────────────────────────────────────────────────────────
+    # INTEGRITY PAGE
+    # ────────────────────────────────────────────────────────────────
     def _draw_integrity_page(self, c: canvas.Canvas, scan: dict) -> None:
-        c.setFillColor(self.DARK_BG)
+        c.setFillColor(self.BLACK)
         c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
+
         c.setFillColor(self.WHITE)
-        c.setFont("Helvetica-Bold", 22)
+        c.setFont("Helvetica-Bold", 20)
         c.drawString(self.MARGIN_X, self.PAGE_H - 72, "AUDIT INTEGRITY VERIFICATION")
 
         hash_val = self._safe(scan.get("findings_hash"), 90, "N/A")
         sha = self._safe(scan.get("commit_sha"), 80, "N/A")
 
-        c.setFillColor(colors.HexColor("#111827"))
-        c.roundRect(self.MARGIN_X, self.PAGE_H - 250, self.PAGE_W - (2 * self.MARGIN_X), 95, 8, fill=1, stroke=0)
-        c.setFillColor(self.MID_GRAY)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 174, "FINDINGS INTEGRITY HASH (SHA-256)")
+        # Hash block
+        c.setStrokeColor(colors.HexColor("#333333"))
+        c.setLineWidth(1)
+        c.rect(self.MARGIN_X, self.PAGE_H - 210, self.PAGE_W - (2 * self.MARGIN_X), 80, fill=0, stroke=1)
+        c.setFillColor(self.LIGHT_GRAY)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 148, "FINDINGS INTEGRITY HASH (SHA-256)")
+        c.setFillColor(self.WHITE)
+        c.setFont(self.mono, 9.5)
+        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 170, hash_val[:90])
+
+        # Commit SHA block
+        c.setStrokeColor(colors.HexColor("#333333"))
+        c.rect(self.MARGIN_X, self.PAGE_H - 320, self.PAGE_W - (2 * self.MARGIN_X), 80, fill=0, stroke=1)
+        c.setFillColor(self.LIGHT_GRAY)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 258, "REPOSITORY COMMIT SHA")
         c.setFillColor(self.WHITE)
         c.setFont(self.mono, 10)
-        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 196, hash_val[:90])
-
-        c.setFillColor(colors.HexColor("#111827"))
-        c.roundRect(self.MARGIN_X, self.PAGE_H - 368, self.PAGE_W - (2 * self.MARGIN_X), 95, 8, fill=1, stroke=0)
-        c.setFillColor(self.MID_GRAY)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 292, "REPOSITORY COMMIT SHA")
-        c.setFillColor(self.WHITE)
-        c.setFont(self.mono, 11)
-        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 314, sha)
+        c.drawString(self.MARGIN_X + 12, self.PAGE_H - 280, sha)
 
         statement = (
             f"This report was generated by SecurePath v1.0.0 on {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}. "
@@ -753,20 +930,22 @@ class AuditReportGenerator:
             "Reports are generated for educational and defensive purposes only. "
             "SecurePath is not liable for how this information is used."
         )
-        p = Paragraph(statement, ParagraphStyle("stmt", parent=self.body, textColor=self.WHITE, leading=15, fontSize=11))
+        p = Paragraph(statement, ParagraphStyle("stmt", parent=self.body, textColor=self.WHITE, leading=14, fontSize=10))
         p.wrapOn(c, self.PAGE_W - (2 * self.MARGIN_X), 120)
-        p.drawOn(c, self.MARGIN_X, self.PAGE_H - 505)
+        p.drawOn(c, self.MARGIN_X, self.PAGE_H - 460)
 
+        # Sign-off
         c.setFillColor(self.WHITE)
-        c.setFont("Helvetica-Bold", 11)
+        c.setFont("Helvetica-Bold", 10)
         c.drawString(self.MARGIN_X, 178, "Reviewed by:")
         c.drawString(self.PAGE_W / 2, 178, "Date:")
         c.setStrokeColor(self.WHITE)
-        c.line(self.MARGIN_X + 84, 174, self.PAGE_W / 2 - 20, 174)
-        c.line(self.PAGE_W / 2 + 34, 174, self.PAGE_W - self.MARGIN_X, 174)
-        c.setFont("Helvetica", 10)
-        c.setFillColor(self.MID_GRAY)
-        c.drawString(self.MARGIN_X, 156, "Engineering Lead sign-off")
+        c.setLineWidth(0.5)
+        c.line(self.MARGIN_X + 78, 174, self.PAGE_W / 2 - 20, 174)
+        c.line(self.PAGE_W / 2 + 30, 174, self.PAGE_W - self.MARGIN_X, 174)
+        c.setFont("Helvetica", 9)
+        c.setFillColor(self.LIGHT_GRAY)
+        c.drawString(self.MARGIN_X, 158, "Engineering Lead sign-off")
 
         extra = getattr(self, "_extra_pages", 1)
-        self._draw_footer(c, 2 + self.finding_counter + extra + 1, dark=True)
+        self._draw_footer(c, 2 + self.finding_counter + extra + 1)

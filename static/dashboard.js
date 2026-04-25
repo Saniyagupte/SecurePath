@@ -110,6 +110,20 @@
     return [];
   }
 
+  function parseJsonField(finding, field) {
+    const val = finding[field];
+    if (val && typeof val === "object" && !Array.isArray(val)) return val;
+    if (typeof val === "string" && val.trim()) {
+      try {
+        const parsed = JSON.parse(val);
+        return (parsed && typeof parsed === "object") ? parsed : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  }
+
   function formatDuration() {
     if (!state.startedAt || Number.isNaN(state.startedAt.getTime())) {
       return "n/a";
@@ -255,6 +269,8 @@
     const controls = parseSoc2(finding.soc2_controls);
     const remediation = parseRemediation(finding);
     const fpRisk = String(finding.false_positive_risk || "medium").toUpperCase();
+    const bi = parseJsonField(finding, "business_impact_json") || parseJsonField(finding, "business_impact");
+    const ae = parseJsonField(finding, "assets_exposed_json") || parseJsonField(finding, "assets_exposed");
 
     const remediationCards = remediation.length
       ? remediation
@@ -276,10 +292,46 @@
           .join("")
       : '<div class="tiny-muted">No remediation details available.</div>';
 
+    // Business Impact tab content
+    const biFinancial = sanitize(bi.financial_exposure || "Financial exposure data unavailable.");
+    const biLikelihood = sanitize(bi.exploitation_likelihood || "unknown");
+    const biReason = sanitize(bi.likelihood_reason || "");
+    const biViolations = Array.isArray(bi.compliance_violations) ? bi.compliance_violations : [];
+    const biViolationsHtml = biViolations.length
+      ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:6px">
+           <thead><tr style="border-bottom:1px solid var(--border)">
+             <th style="text-align:left;padding:4px 6px;color:var(--text-secondary)">Framework</th>
+             <th style="text-align:left;padding:4px 6px;color:var(--text-secondary)">Control</th>
+             <th style="text-align:left;padding:4px 6px;color:var(--text-secondary)">Implication</th>
+           </tr></thead>
+           <tbody>${biViolations.map(v => `<tr style="border-bottom:1px solid var(--border)">
+             <td style="padding:4px 6px">${sanitize(v.framework || "")}</td>
+             <td style="padding:4px 6px;font-weight:700">${sanitize(v.control || "")}</td>
+             <td style="padding:4px 6px;color:var(--text-secondary)">${sanitize(v.meaning || "")}</td>
+           </tr>`).join("")}</tbody></table>`
+      : '<div class="tiny-muted">No violations mapped.</div>';
+
+    // Assets Exposed tab content
+    const aeDataTypes = Array.isArray(ae.data_types) ? ae.data_types : [];
+    const aeSystems = Array.isArray(ae.systems_affected) ? ae.systems_affected : [];
+    const aeScope = sanitize(ae.exposure_scope || "unknown");
+    const aeExplanation = sanitize(ae.exposure_explanation || "");
+    const aeRecords = sanitize(ae.estimated_records_at_risk || "unknown");
+
+    const dataTypeTags = aeDataTypes.length
+      ? aeDataTypes.map(dt => `<span class="ctl">${sanitize(dt)}</span>`).join("")
+      : '<span class="tiny-muted">No data types identified</span>';
+
+    const systemsList = aeSystems.length
+      ? aeSystems.map(s => `<div style="margin:2px 0;font-size:0.82rem">· ${sanitize(s)}</div>`).join("")
+      : '<div class="tiny-muted">No systems identified</div>';
+
     return `
       <div class="exai-panel" data-panel-for="${sanitize(finding.id)}">
         <div class="tabs">
           <button class="tab-btn active" data-tab="overview">Overview</button>
+          <button class="tab-btn" data-tab="impact">Business Impact</button>
+          <button class="tab-btn" data-tab="assets">Assets Exposed</button>
           <button class="tab-btn" data-tab="remediation">Remediation</button>
           <button class="tab-btn" data-tab="compliance">Compliance</button>
           <button class="tab-btn" data-tab="raw">Raw</button>
@@ -288,7 +340,7 @@
         <div class="tab-pane active" data-pane="overview">
           <div class="overview-grid">
             <div class="overview-card">
-              <h4>PLAIN ENGLISH</h4>
+              <h4>FINDING EXPLANATION</h4>
               <p>${sanitize(finding.plain_english || "No explanation available.")}</p>
             </div>
             <div class="overview-card risk">
@@ -298,6 +350,45 @@
             <div class="overview-card exploit">
               <h4>EXPLOIT SCENARIO</h4>
               <p>${sanitize(finding.exploit_scenario || "No exploit scenario available.")}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane" data-pane="impact">
+          <div class="overview-grid">
+            <div class="overview-card risk">
+              <h4>FINANCIAL EXPOSURE</h4>
+              <p>${biFinancial}</p>
+            </div>
+            <div class="overview-card">
+              <h4>EXPLOITATION LIKELIHOOD</h4>
+              <p><span class="severity-chip ${biLikelihood === 'high' ? 'critical' : biLikelihood === 'medium' ? 'medium' : 'low'}" style="margin-right:8px">${biLikelihood.toUpperCase()}</span>${biReason}</p>
+            </div>
+            <div class="overview-card">
+              <h4>COMPLIANCE VIOLATIONS</h4>
+              ${biViolationsHtml}
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane" data-pane="assets">
+          <div class="overview-grid">
+            <div class="overview-card">
+              <h4>DATA TYPES AT RISK</h4>
+              <div class="controls-wrap" style="margin-top:4px">${dataTypeTags}</div>
+            </div>
+            <div class="overview-card">
+              <h4>SYSTEMS AFFECTED</h4>
+              ${systemsList}
+            </div>
+            <div class="overview-card">
+              <h4>EXPOSURE SCOPE</h4>
+              <p><span class="severity-chip ${aeScope === 'external_facing' ? 'critical' : aeScope === 'third_party_accessible' ? 'medium' : 'low'}">${aeScope.replace(/_/g, ' ').toUpperCase()}</span></p>
+            </div>
+            <div class="overview-card">
+              <h4>EXPOSURE DETAIL</h4>
+              <p>${aeExplanation}</p>
+              ${aeRecords !== 'unknown' ? `<p style="margin-top:4px;color:var(--text-secondary);font-size:0.8rem">Estimated records at risk: <b>${aeRecords}</b></p>` : ''}
             </div>
           </div>
         </div>

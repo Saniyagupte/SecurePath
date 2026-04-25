@@ -191,7 +191,31 @@ Use this exact schema:
       "description": "Architectural hardening with specific packages if needed.",
       "tradeoff": "Long-term posture gain and maintenance cost."
     }}
-  ]
+  ],
+  "business_impact": {{
+    "financial_exposure": "Realistic cost if exploited. Reference actual figures like average breach costs $4.4M, GDPR fines up to 4% annual revenue. Be specific to this finding type.",
+    "compliance_violations": [
+      {{
+        "framework": "SOC2",
+        "control": "The specific control ID",
+        "meaning": "What this control requires and how this finding violates it"
+      }},
+      {{
+        "framework": "ISO 27001",
+        "control": "The specific control ID",
+        "meaning": "What this control requires and how this finding violates it"
+      }}
+    ],
+    "exploitation_likelihood": "low or medium or high",
+    "likelihood_reason": "One sentence why, based on the specific code shown"
+  }},
+  "assets_exposed": {{
+    "data_types": ["specific data types at risk: PII, credentials, financial data, API keys, session tokens, etc"],
+    "systems_affected": ["specific systems or services at risk based on file path and code context"],
+    "exposure_scope": "internal_only or external_facing or third_party_accessible",
+    "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
+    "estimated_records_at_risk": "rough estimate or unknown"
+  }}
 }}"""
 
         last_error: Exception | None = None
@@ -298,6 +322,16 @@ Use this exact schema:
         if not isinstance(remediation, list):
             remediation = []
 
+        # Merge business_impact — prefer LLM response, fall back to template
+        business_impact = enrichment.get("business_impact")
+        if not isinstance(business_impact, dict) or not business_impact:
+            business_impact = base.get("business_impact", {})
+
+        # Merge assets_exposed — prefer LLM response, fall back to template
+        assets_exposed = enrichment.get("assets_exposed")
+        if not isinstance(assets_exposed, dict) or not assets_exposed:
+            assets_exposed = base.get("assets_exposed", {})
+
         merged.update(
             {
                 "plain_english": str(enrichment.get("plain_english") or base.get("plain_english"))[:800],
@@ -310,6 +344,10 @@ Use this exact schema:
                 "confidence_score": base.get("confidence_score", 7),
                 "false_positive_risk": base.get("false_positive_risk", "medium"),
                 "false_positive_reason": str(base.get("false_positive_reason"))[:800],
+                "business_impact": business_impact,
+                "business_impact_json": json.dumps(business_impact),
+                "assets_exposed": assets_exposed,
+                "assets_exposed_json": json.dumps(assets_exposed),
                 "enrichment_failed": enrichment_failed,
                 "enrichment_status": "failed" if enrichment_failed else "complete",
             }
@@ -360,6 +398,8 @@ Use this exact schema:
             base_confidence = min(base_confidence, 6)
 
         enriched = dict(mapped)
+        business_impact = self._template_business_impact(mapped)
+        assets_exposed = self._template_assets_exposed(mapped)
         enriched.update(
             {
                 "plain_english": self._specific_plain_english(mapped)[:800],
@@ -372,6 +412,10 @@ Use this exact schema:
                 "false_positive_reason": (
                     f"The finding is pattern-based (CWE {cwe}, {owasp}); manual validation should confirm runtime reachability and exploitability."
                 )[:800],
+                "business_impact": business_impact,
+                "business_impact_json": json.dumps(business_impact),
+                "assets_exposed": assets_exposed,
+                "assets_exposed_json": json.dumps(assets_exposed),
                 "enrichment_failed": False,
                 "enrichment_status": "complete",
             }
@@ -655,3 +699,142 @@ Use this exact schema:
             ]
 
         return None
+
+    def _template_business_impact(self, finding: dict[str, Any]) -> dict[str, Any]:
+        """Generate deterministic business impact data when LLM is unavailable."""
+        category = str(finding.get("category", "misc")).lower()
+        severity = str(finding.get("severity", "medium")).lower()
+        vuln_type = str(finding.get("vulnerability_type", "broken_auth"))
+        controls = finding.get("soc2_controls", [])
+        if isinstance(controls, str):
+            controls = [c.strip() for c in controls.split(",") if c.strip()]
+        rationale = finding.get("soc2_rationale", {})
+        if not isinstance(rationale, dict):
+            rationale = {}
+
+        financial_map = {
+            "injection": "SQL injection breaches average $4.4M in remediation costs (IBM 2023). Regulatory fines under GDPR can reach 4% of annual revenue for unauthorized data access.",
+            "secrets": "Exposed credentials lead to account takeover with median incident cost of $4.5M. Mandatory breach notification costs and regulatory penalties apply if customer data is accessed.",
+            "auth": "Authentication bypass enables unauthorized access to protected resources. Average cost of credential-based attacks is $4.6M per incident (IBM 2023).",
+            "deps": "Known CVEs in production dependencies create documented attack paths. Exploitation of unpatched vulnerabilities averages $4.2M in breach costs.",
+            "config": "Security misconfiguration is exploitable at scale. Average cost of misconfiguration-related breaches is $3.9M including detection and remediation.",
+            "xss": "Cross-site scripting enables session theft and data exfiltration. Customer trust impact can exceed direct costs, averaging $4.1M per incident.",
+            "crypto": "Weak cryptography exposes data in transit or at rest. Regulatory fines under PCI-DSS, HIPAA, or GDPR apply if protected data is compromised.",
+            "misc": "This vulnerability weakens security posture and may result in direct financial impact through breach costs averaging $4.4M (IBM 2023).",
+        }
+
+        likelihood_map = {
+            "critical": ("high", "The vulnerability is directly exploitable with publicly known techniques and requires no prior authentication."),
+            "high": ("high", "The vulnerability has known exploitation paths and is reachable from an external interface."),
+            "medium": ("medium", "Exploitation requires specific conditions or prior access, reducing probability but not eliminating risk."),
+            "low": ("low", "The vulnerability requires significant preconditions to exploit and has limited blast radius."),
+        }
+
+        likelihood, reason = likelihood_map.get(severity, ("medium", "Risk level is based on pattern-based detection; manual confirmation recommended."))
+
+        # Build compliance violations from mapped SOC2 controls plus ISO 27001 equivalent
+        iso_map = {
+            "CC6.1": ("A.9.4.1", "Information access restriction — systems must enforce access control policies"),
+            "CC6.2": ("A.9.2.1", "User registration and de-registration — credential management must be secure"),
+            "CC6.3": ("A.9.2.2", "User access provisioning — access must be authorized and reviewed"),
+            "CC6.6": ("A.13.1.1", "Network controls — infrastructure must be protected against known threats"),
+            "CC6.7": ("A.13.2.1", "Information transfer policies — data transmission must be controlled"),
+            "CC6.8": ("A.12.2.1", "Controls against malware — unauthorized software execution must be prevented"),
+            "CC7.1": ("A.12.6.1", "Management of technical vulnerabilities — known vulnerabilities must be identified and addressed"),
+            "CC7.2": ("A.12.4.1", "Event logging — security events must be recorded"),
+            "CC7.3": ("A.16.1.2", "Reporting information security events — incidents must be evaluated"),
+            "CC8.1": ("A.14.2.2", "System change control procedures — changes must follow established processes"),
+            "CC9.2": ("A.15.1.2", "Addressing security within supplier agreements — third-party risk must be managed"),
+        }
+
+        violations = []
+        for ctl in (controls or [])[:3]:
+            ctl_str = str(ctl).strip()
+            soc2_meaning = rationale.get(ctl_str, f"This finding creates a control deficiency under {ctl_str}")
+            violations.append({
+                "framework": "SOC2",
+                "control": ctl_str,
+                "meaning": soc2_meaning,
+            })
+            if ctl_str in iso_map:
+                iso_ctl, iso_meaning = iso_map[ctl_str]
+                violations.append({
+                    "framework": "ISO 27001",
+                    "control": iso_ctl,
+                    "meaning": iso_meaning,
+                })
+
+        # Ensure at least one violation entry
+        if not violations:
+            violations = [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Logical access controls are insufficient to prevent unauthorized access"},
+                {"framework": "ISO 27001", "control": "A.9.4.1", "meaning": "Information access restriction — systems must enforce access control policies"},
+            ]
+
+        return {
+            "financial_exposure": financial_map.get(category, financial_map["misc"]),
+            "compliance_violations": violations,
+            "exploitation_likelihood": likelihood,
+            "likelihood_reason": reason,
+        }
+
+    def _template_assets_exposed(self, finding: dict[str, Any]) -> dict[str, Any]:
+        """Generate deterministic asset exposure data when LLM is unavailable."""
+        category = str(finding.get("category", "misc")).lower()
+        vuln_type = str(finding.get("vulnerability_type", "broken_auth"))
+        file_path = str(finding.get("file_path", "unknown"))
+        severity = str(finding.get("severity", "medium")).lower()
+
+        data_type_map = {
+            "injection": ["Database records", "PII", "Credentials"],
+            "secrets": ["API keys", "Credentials", "Service tokens"],
+            "auth": ["User sessions", "PII", "Account credentials"],
+            "deps": ["Application data", "Server resources"],
+            "config": ["Server metadata", "Internal endpoints"],
+            "xss": ["Session tokens", "DOM data", "User PII"],
+            "crypto": ["Encrypted data at rest", "Data in transit"],
+            "misc": ["Application data"],
+        }
+
+        # Infer systems from file path
+        systems = []
+        fp_lower = file_path.lower()
+        if any(k in fp_lower for k in ["route", "controller", "api", "handler"]):
+            systems.append("API layer")
+        if any(k in fp_lower for k in ["auth", "login", "session", "jwt"]):
+            systems.append("Authentication service")
+        if any(k in fp_lower for k in ["db", "model", "sequelize", "query"]):
+            systems.append("Database")
+        if any(k in fp_lower for k in ["config", ".env", "setting"]):
+            systems.append("Configuration store")
+        if any(k in fp_lower for k in ["server", "app", "index"]):
+            systems.append("Application server")
+        if not systems:
+            systems = ["Application server"]
+
+        # Determine exposure scope
+        if category in {"injection", "auth", "xss"} or severity in {"critical", "high"}:
+            scope = "external_facing"
+        elif category in {"deps"}:
+            scope = "third_party_accessible"
+        else:
+            scope = "internal_only"
+
+        exposure_map = {
+            "injection": f"An attacker can read, modify, or delete arbitrary database records accessible from `{file_path}`.",
+            "secrets": f"An attacker can use exposed credentials from `{file_path}` to access connected systems and data stores.",
+            "auth": f"An attacker can bypass authentication in `{file_path}` to access protected user accounts and data.",
+            "deps": f"An attacker can exploit known CVEs in dependencies referenced by `{file_path}` to gain application-level access.",
+            "config": f"An attacker can leverage misconfiguration in `{file_path}` to expand access to internal services.",
+            "xss": f"An attacker can inject scripts via `{file_path}` to steal session tokens and impersonate users.",
+            "crypto": f"An attacker can recover or forge data protected by weak cryptography in `{file_path}`.",
+            "misc": f"An attacker can exploit this weakness in `{file_path}` to access restricted resources.",
+        }
+
+        return {
+            "data_types": data_type_map.get(category, data_type_map["misc"]),
+            "systems_affected": systems,
+            "exposure_scope": scope,
+            "exposure_explanation": exposure_map.get(category, exposure_map["misc"]),
+            "estimated_records_at_risk": "unknown",
+        }

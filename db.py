@@ -179,6 +179,7 @@ FINDING_FIELDS = {
     "business_risk", "exploit_scenario", "remediation_json",
     "soc2_controls", "confidence_score", "false_positive_risk",
     "false_positive_reason", "enrichment_status", "created_at",
+    "business_impact_json", "assets_exposed_json",
 }
 
 
@@ -238,6 +239,8 @@ def init_db() -> None:
               false_positive_risk  TEXT,
               false_positive_reason TEXT,
               enrichment_status    TEXT DEFAULT 'pending',
+              business_impact_json TEXT,
+              assets_exposed_json  TEXT,
               created_at           TEXT,
               FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
             )
@@ -288,6 +291,14 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sessions_scan_id ON scan_sessions(scan_id)"
         )
+
+        # Safe migration: add new columns to existing databases
+        for col in ("business_impact_json", "assets_exposed_json"):
+            try:
+                conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
+            except Exception:
+                pass  # column already exists
+
         conn.commit()
 
 
@@ -369,6 +380,8 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
         "false_positive_risk":  finding_dict.get("false_positive_risk"),
         "false_positive_reason":finding_dict.get("false_positive_reason"),
         "enrichment_status":    finding_dict.get("enrichment_status", "pending"),
+        "business_impact_json": finding_dict.get("business_impact_json"),
+        "assets_exposed_json":  finding_dict.get("assets_exposed_json"),
         "created_at":           created_at,
     }
 
@@ -381,14 +394,16 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
               owasp_category, npm_package, plain_english, business_risk,
               exploit_scenario, remediation_json, soc2_controls,
               confidence_score, false_positive_risk, false_positive_reason,
-              enrichment_status, created_at
+              enrichment_status, business_impact_json, assets_exposed_json,
+              created_at
             ) VALUES (
               :id, :scan_id, :pass_name, :file_path, :line_start, :line_end,
               :severity, :category, :raw_title, :code_snippet, :cve_id, :cwe_id,
               :owasp_category, :npm_package, :plain_english, :business_risk,
               :exploit_scenario, :remediation_json, :soc2_controls,
               :confidence_score, :false_positive_risk, :false_positive_reason,
-              :enrichment_status, :created_at
+              :enrichment_status, :business_impact_json, :assets_exposed_json,
+              :created_at
             )
             """,
             values,
