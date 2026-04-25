@@ -7,13 +7,256 @@
   <meta name="description" content="SecurePath transforms security vulnerabilities into structured compliance evidence. SOC2, ISO 27001, OWASP Top 10 coverage in one scan.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,300;0,6..12,400;0,6..12,600;0,6..12,700;0,6..12,800;1,6..12,300;1,6..12,400&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black: #0a0a0a;
+      --black-nav: #111214;
+      --white: #ffffff;
+      --off-white: #f8f8f6;
+      --light-gray: #f2f2ef;
+      --mid-gray: #e0e0db;
+      --border: #d4d4ce;
+      --border-dark: #2a2a2e;
+      --text-primary: #111214;
+      --text-secondary: #555555;
+      --text-muted: #888888;
+      --accent: #0057b8;
+      --accent-light: #e8f0fc;
+      --red: #c8232c;
+      --font-sans: 'Nunito Sans', sans-serif;
+      --font-display: 'Space Grotesk', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font-sans); background: var(--white); color: var(--text-primary); overflow-x: hidden; }
+
+    /* ── NAV ── */
+    .nav {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 56px; height: 64px;
+      background: var(--black-nav);
+      border-bottom: 1px solid #2a2a2e;
+    }
+    .brand {
+      font-family: var(--font-display); font-size: 15px; font-weight: 700;
+      letter-spacing: 0.1em; color: var(--white); text-transform: uppercase;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .brand-dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
+    .nav-right { display: flex; align-items: center; gap: 24px; }
+    .badge {
+      font-family: var(--font-mono); font-size: 10px; color: #777;
+      border: 1px solid #333; padding: 3px 8px; border-radius: 3px;
+    }
+    .nav-link { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #aaa; text-decoration: none; transition: color 0.2s; }
+    .nav-link:hover { color: var(--white); }
+
+    /* ── HERO ── */
+    .hero {
+      display: grid; grid-template-columns: 1fr 1fr;
+      min-height: calc(100vh - 64px);
+      border-bottom: 1px solid var(--border);
+    }
+    .hero-left {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 80px 64px 80px 56px;
+      border-right: 1px solid var(--border);
+    }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+      letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
+      margin-bottom: 24px; display: flex; align-items: center; gap: 10px;
+    }
+    .eyebrow::before { content: ''; display: block; width: 20px; height: 1px; background: var(--accent); }
+    .hero-title {
+      font-family: var(--font-display); font-size: clamp(44px, 5vw, 72px);
+      font-weight: 700; line-height: 1.05; color: var(--black); letter-spacing: -0.02em;
+      margin-bottom: 24px;
+    }
+    .hero-title .accent-word { color: var(--accent); }
+    .hero-subtitle {
+      font-size: 15px; font-weight: 300; line-height: 1.8;
+      color: var(--text-secondary); max-width: 460px; margin-bottom: 48px;
+    }
+
+    /* scan card — borders only */
+    .scan-card {
+      border: 1px solid var(--border);
+      border-radius: 6px; padding: 28px 32px;
+      background: var(--off-white);
+      position: relative;
+    }
+    .scan-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--black-nav); border-radius: 6px 6px 0 0;
+    }
+    .input-label {
+      display: block; font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+      letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+    }
+    .input-row {
+      display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+      background: var(--white);
+    }
+    .input-row input {
+      flex: 1; background: transparent; border: none; outline: none;
+      font-family: var(--font-mono); font-size: 12px; color: var(--text-primary);
+      padding: 13px 16px; letter-spacing: 0.02em;
+    }
+    .input-row input::placeholder { color: #aaa; }
+    .input-row input:focus { background: #fafafa; }
+    .input-row button {
+      background: var(--black-nav); border: none; border-left: 1px solid var(--border);
+      padding: 13px 22px; font-family: var(--font-display); font-size: 11px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--white);
+      cursor: pointer; transition: background 0.15s; white-space: nowrap;
+    }
+    .input-row button:hover { background: #222; }
+    .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .form-error { font-family: var(--font-mono); font-size: 11px; color: var(--red); margin-top: 8px; min-height: 16px; }
+    .scan-meta { font-size: 12px; color: var(--text-muted); margin-top: 14px; line-height: 1.6; }
+    .lockline { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+
+    /* hero right — terminal */
+    .hero-right {
+      display: flex; align-items: center; justify-content: center;
+      padding: 80px 56px 80px 64px;
+      background: var(--off-white);
+    }
+    .terminal-shell {
+      width: 100%; max-width: 500px;
+      background: var(--black-nav); border: 1px solid var(--border-dark);
+      border-radius: 8px; overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.12), 0 4px 16px rgba(0,0,0,0.08);
+    }
+    .terminal-topbar {
+      display: flex; align-items: center; gap: 7px; padding: 12px 18px;
+      background: #1a1a1e; border-bottom: 1px solid #2a2a2e;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot.red { background: #ff5f57; }
+    .dot.yellow { background: #febc2e; }
+    .dot.green { background: #28c840; }
+    .terminal-title { margin-left: 8px; font-family: var(--font-mono); font-size: 11px; color: #555; }
+    .terminal-body {
+      padding: 20px 24px; min-height: 260px; max-height: 340px;
+      overflow-y: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.9;
+    }
+    .terminal-body::-webkit-scrollbar { width: 4px; }
+    .terminal-body::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .terminal-line { color: #666; }
+    .terminal-line.prompt { color: #aaa; }
+    .terminal-line.err { color: #e05555; }
+    .terminal-line.ok { color: #4caf7d; }
+    .cursor { display: inline-block; width: 7px; height: 13px; background: #888; margin-left: 3px; vertical-align: middle; animation: blink 1s step-end infinite; }
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+
+    /* ── STATS BAR ── */
+    .stats-bar {
+      display: flex; border-bottom: 1px solid var(--border);
+      background: var(--black-nav);
+    }
+    .stat {
+      flex: 1; text-align: center; padding: 18px 24px;
+      font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: #888;
+      border-right: 1px solid #2a2a2e; transition: color 0.2s;
+    }
+    .stat:last-child { border-right: none; }
+    .stat:hover { color: var(--white); }
+
+    /* ── HOW IT WORKS ── */
+    .how { padding: 100px 56px; background: var(--white); border-bottom: 1px solid var(--border); }
+    .section-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 64px; }
+    .section-num { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+    .section-title {
+      font-family: var(--font-display); font-size: clamp(28px, 3.5vw, 44px);
+      font-weight: 700; color: var(--black); letter-spacing: -0.02em;
+    }
+    .section-line { flex: 1; height: 1px; background: var(--border); }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .step-card { padding: 44px 40px; border-right: 1px solid var(--border); position: relative; transition: background 0.2s; }
+    .step-card:last-child { border-right: none; }
+    .step-card:hover { background: var(--off-white); }
+    .step-num {
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+      color: var(--accent); letter-spacing: 0.1em; margin-bottom: 20px;
+    }
+    .step-card h3 { font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--black); margin-bottom: 14px; }
+    .step-card p { font-size: 13.5px; font-weight: 300; line-height: 1.8; color: var(--text-secondary); }
+
+    /* ── DEMO FINDING ── */
+    .demo-finding { padding: 100px 56px; background: var(--off-white); border-bottom: 1px solid var(--border); }
+    .finding-card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--white); box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
+    .finding-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 28px; background: var(--black-nav);
+      border-bottom: 1px solid var(--border-dark); gap: 20px; flex-wrap: wrap;
+    }
+    .finding-title { font-family: var(--font-mono); font-size: 13px; color: var(--white); }
+    .finding-badges { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .sev { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.18em; padding: 4px 10px; border-radius: 3px; }
+    .sev.critical { background: transparent; color: #e05555; border: 1px solid #e05555; }
+    .sev.high { background: transparent; color: #e08c30; border: 1px solid #e08c30; }
+    .sev.medium { background: transparent; color: #d4c030; border: 1px solid #d4c030; }
+    .tag { font-family: var(--font-mono); font-size: 10px; color: #777; border: 1px solid #333; padding: 3px 8px; border-radius: 3px; }
+    .finding-grid { display: grid; grid-template-columns: 1fr 1fr; }
+    .finding-left { padding: 32px 28px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 0; }
+    .finding-right { padding: 32px 28px; display: flex; flex-direction: column; gap: 0; }
+    .block { padding: 18px 0; border-bottom: 1px solid var(--border); }
+    .block:last-child { border-bottom: none; }
+    .block-label { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+    .block p { font-size: 13px; font-weight: 400; line-height: 1.75; color: var(--text-secondary); }
+    .block code { font-family: var(--font-mono); font-size: 12px; color: var(--black); background: var(--light-gray); padding: 1px 5px; border-radius: 2px; }
+    .block pre { background: var(--black-nav); border: 1px solid #2a2a2e; border-radius: 4px; padding: 14px 18px; overflow-x: auto; margin-top: 8px; }
+    .block pre code { font-family: var(--font-mono); font-size: 11px; color: #aaa; background: none; padding: 0; line-height: 1.7; }
+    .block.risk p { color: #7a3535; }
+    .block.exploit p { color: #2d5a40; }
+    .rem-card { padding: 18px 0; border-bottom: 1px solid var(--border); }
+    .rem-card:last-of-type { border-bottom: 1px solid var(--border); }
+    .rem-card h4 { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--black); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+    .rem-card h4 span { font-weight: 400; color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; }
+    .rem-card p { font-size: 13px; font-weight: 300; line-height: 1.7; color: var(--text-secondary); margin-bottom: 6px; }
+    .rem-card small { font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+    .compliance-line { display: flex; align-items: center; gap: 6px; padding-top: 18px; flex-wrap: wrap; }
+    .ctl { font-family: var(--font-mono); font-size: 10px; color: var(--black); border: 1px solid var(--border-dark); padding: 4px 10px; border-radius: 3px; }
+    .meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-left: auto; }
+
+    /* ── FOOTER ── */
+    .footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 24px 56px; background: var(--black-nav); border-top: 1px solid var(--border-dark);
+    }
+    .footer p { font-size: 12px; letter-spacing: 0.06em; color: #555; }
+    .footer-links { display: flex; gap: 28px; }
+    .footer-links a { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #888; text-decoration: none; transition: color 0.2s; }
+    .footer-links a:hover { color: var(--white); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 960px) {
+      .nav { padding: 0 24px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-left { padding: 52px 24px; border-right: none; border-bottom: 1px solid var(--border); }
+      .hero-right { padding: 40px 24px; }
+      .how, .demo-finding { padding: 72px 24px; }
+      .steps { grid-template-columns: 1fr; }
+      .step-card { border-right: none; border-bottom: 1px solid var(--border); }
+      .finding-grid { grid-template-columns: 1fr; }
+      .finding-left { border-right: none; border-bottom: 1px solid var(--border); }
+      .footer { flex-direction: column; gap: 14px; text-align: center; padding: 24px; }
+      .stats-bar { flex-direction: column; }
+      .stat { border-right: none; border-bottom: 1px solid #2a2a2e; }
+    }
+  </style>
 </head>
-<body class="landing-body">
-  <div class="bg-grid"></div>
+<body>
   <header class="nav">
-    <div class="brand">SECUREPATH</div>
+    <div class="brand"><span class="brand-dot"></span>SECUREPATH</div>
     <div class="nav-right">
       <span class="badge">v1.0.0</span>
       <a class="nav-link" href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
@@ -26,10 +269,10 @@
         <div class="eyebrow">Security Assessment Platform</div>
         <h1 class="hero-title">
           Scan. Analyze.<br>
-          Generate evidence.
+          <span class="accent-word">Generate</span> evidence.
         </h1>
         <p class="hero-subtitle">
-          Five-pass security analysis with AI-enriched findings, business impact assessment, 
+          Five-pass security analysis with AI-enriched findings, business impact assessment,
           and compliance mapping. One scan produces audit-ready documentation.
         </p>
 
@@ -38,20 +281,16 @@
             <label for="repo_url" class="input-label">GitHub Repository URL</label>
             <div class="input-row">
               <input
-                id="repo_url"
-                name="repo_url"
-                type="url"
-                autocomplete="off"
-                placeholder="https://github.com/your-org/your-repo"
-                required
+                id="repo_url" name="repo_url" type="url"
+                autocomplete="off" placeholder="https://github.com/your-org/your-repo" required
               >
-              <button id="scan-btn" type="submit">START SCAN</button>
+              <button id="scan-btn" type="submit">Start Scan</button>
             </div>
             <p id="form-error" class="form-error" aria-live="polite"></p>
           </form>
           <p class="scan-meta">No signup required. Works with any public GitHub repository.</p>
           <p class="scan-meta lockline">
-            <span class="lock-icon" aria-hidden="true">🔒</span>
+            <span aria-hidden="true">🔒</span>
             Repository is cloned locally and deleted after scan completes
           </p>
         </div>
@@ -60,9 +299,7 @@
       <div class="hero-right">
         <div class="terminal-shell">
           <div class="terminal-topbar">
-            <span class="dot red"></span>
-            <span class="dot yellow"></span>
-            <span class="dot green"></span>
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
             <span class="terminal-title">securepath — scan output</span>
           </div>
           <div class="terminal-body" id="terminal-body">
@@ -79,28 +316,36 @@
     </section>
 
     <section class="how">
-      <h2>How It Works</h2>
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2 class="section-title">How It Works</h2>
+        <span class="section-line"></span>
+      </div>
       <div class="steps">
         <article class="step-card">
-          <div class="step-num">01</div>
-          <h3>SCAN</h3>
+          <div class="step-num">STEP 01</div>
+          <h3>Scan</h3>
           <p>Submit any public GitHub repository. SecurePath runs five analysis passes: SAST via Semgrep, dependency CVE audit, secret detection, structural pattern analysis, and configuration review.</p>
         </article>
         <article class="step-card">
-          <div class="step-num">02</div>
-          <h3>ENRICH</h3>
+          <div class="step-num">STEP 02</div>
+          <h3>Enrich</h3>
           <p>Each finding receives AI enrichment: plain English explanation, business impact analysis, exploit scenario, asset exposure mapping, and three ranked remediation strategies.</p>
         </article>
         <article class="step-card">
-          <div class="step-num">03</div>
-          <h3>EVIDENCE</h3>
+          <div class="step-num">STEP 03</div>
+          <h3>Evidence</h3>
           <p>Download a structured PDF report with compliance control mapping, business impact data, and SHA-256 tamper verification. Built for engineering teams preparing audit evidence.</p>
         </article>
       </div>
     </section>
 
     <section class="demo-finding">
-      <h2>Sample Finding</h2>
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2 class="section-title">Sample Finding</h2>
+        <span class="section-line"></span>
+      </div>
       <div class="finding-card">
         <div class="finding-header">
           <div class="finding-title">SQL injection via unsafe query interpolation</div>
@@ -110,7 +355,6 @@
             <span class="tag">A03:2021</span>
           </div>
         </div>
-
         <div class="finding-grid">
           <div class="finding-left">
             <div class="block">
@@ -133,17 +377,17 @@ const q = `SELECT * FROM Users WHERE email = '${req.query.email}'`;</code></pre>
           </div>
           <div class="finding-right">
             <div class="rem-card">
-              <h4>OPTION 1: QUICK FIX <span>&lt; 1 hour</span></h4>
+              <h4>OPTION 1 — Quick Fix <span>&lt; 1 hour</span></h4>
               <p>Replace string interpolation with Sequelize replacements and reject unsafe characters in the input path.</p>
               <small>Tradeoff: immediate containment but doesn't enforce a central query policy.</small>
             </div>
             <div class="rem-card">
-              <h4>OPTION 2: PROPER FIX <span>&lt; 4 hours</span></h4>
+              <h4>OPTION 2 — Proper Fix <span>&lt; 4 hours</span></h4>
               <p>Migrate endpoint to parameterized ORM queries and add schema validation middleware.</p>
               <small>Tradeoff: best risk reduction per effort with moderate refactor impact.</small>
             </div>
             <div class="rem-card">
-              <h4>OPTION 3: ROBUST FIX <span>1-2 days</span></h4>
+              <h4>OPTION 3 — Robust Fix <span>1–2 days</span></h4>
               <p>Centralize data access behind repository interfaces, enforce query linting in CI, and add security regression tests.</p>
               <small>Tradeoff: highest confidence and maintainability, broader engineering coordination.</small>
             </div>
@@ -190,47 +434,31 @@ const q = `SELECT * FROM Users WHERE email = '${req.query.email}'`;</code></pre>
         "✓ Complete. 23 findings. Risk score: 94/100"
       ];
 
-      let terminalIndex = 0;
-      let loopTimeout;
+      let terminalIndex = 0, loopTimeout;
 
-      function clearError() {
-        errorEl.textContent = "";
-      }
-
-      function showError(message) {
-        errorEl.textContent = message;
-      }
+      function clearError() { errorEl.textContent = ""; }
+      function showError(msg) { errorEl.textContent = msg; }
 
       async function submitScan(repoUrl) {
         const response = await fetch("/api/scan/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo_url: repoUrl })
         });
         const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || "Unable to start scan.");
-        }
+        if (!response.ok) throw new Error(data.error || "Unable to start scan.");
         window.location.href = data.redirect || ("/scan/" + data.scan_id);
       }
 
-      form.addEventListener("submit", async function (event) {
-        event.preventDefault();
-        clearError();
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault(); clearError();
         const repoUrl = input.value.trim();
         if (!githubRegex.test(repoUrl)) {
           showError("Enter a valid public GitHub URL, e.g. https://github.com/juice-shop/juice-shop");
           return;
         }
-        button.disabled = true;
-        button.textContent = "SCANNING...";
-        try {
-          await submitScan(repoUrl);
-        } catch (err) {
-          showError(err.message || "Scan failed to start.");
-          button.disabled = false;
-          button.textContent = "START SCAN";
-        }
+        button.disabled = true; button.textContent = "Scanning...";
+        try { await submitScan(repoUrl); }
+        catch (err) { showError(err.message || "Scan failed to start."); button.disabled = false; button.textContent = "Start Scan"; }
       });
 
       function renderTerminalLine(text, isCurrent) {
@@ -239,43 +467,25 @@ const q = `SELECT * FROM Users WHERE email = '${req.query.email}'`;</code></pre>
         const span = document.createElement("span");
         span.textContent = text;
         line.appendChild(span);
-        if (isCurrent) {
-          const cursor = document.createElement("i");
-          cursor.className = "cursor";
-          line.appendChild(cursor);
-        }
+        if (isCurrent) { const cursor = document.createElement("i"); cursor.className = "cursor"; line.appendChild(cursor); }
         return line;
       }
 
       function animateTerminal() {
         if (!terminalBody) return;
-        terminalBody.innerHTML = "";
-        terminalIndex = 0;
-
+        terminalBody.innerHTML = ""; terminalIndex = 0;
         function step() {
-          const done = terminalIndex >= terminalLines.length;
-          if (done) {
-            loopTimeout = setTimeout(animateTerminal, 2200);
-            return;
-          }
+          if (terminalIndex >= terminalLines.length) { loopTimeout = setTimeout(animateTerminal, 2800); return; }
           const lines = terminalBody.querySelectorAll(".terminal-line");
-          if (lines.length) {
-            lines[lines.length - 1].querySelector(".cursor")?.remove();
-          }
-          const line = renderTerminalLine(terminalLines[terminalIndex], true);
-          terminalBody.appendChild(line);
+          if (lines.length) lines[lines.length - 1].querySelector(".cursor")?.remove();
+          terminalBody.appendChild(renderTerminalLine(terminalLines[terminalIndex], true));
           terminalBody.scrollTop = terminalBody.scrollHeight;
-          terminalIndex += 1;
-          loopTimeout = setTimeout(step, 500);
+          terminalIndex++;
+          loopTimeout = setTimeout(step, 520);
         }
-
         step();
       }
-
-      window.addEventListener("beforeunload", function () {
-        if (loopTimeout) clearTimeout(loopTimeout);
-      });
-
+      window.addEventListener("beforeunload", () => { if (loopTimeout) clearTimeout(loopTimeout); });
       animateTerminal();
     })();
   </script>

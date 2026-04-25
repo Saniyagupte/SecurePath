@@ -1,120 +1,585 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SecurePath Report Preview</title>
+  <title>SecurePath — Report Preview</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,300;0,6..12,400;0,6..12,600;0,6..12,700;0,6..12,800&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
   <style>
-    .preview-wrap {
-      width: min(1200px, 100% - 48px);
-      margin: 22px auto 36px;
-      position: relative;
-      z-index: 1;
-    }
-    .preview-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .preview-head h1 {
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
       margin: 0;
-      font-size: 1.35rem;
+      padding: 0;
     }
-    .preview-meta {
-      color: var(--text-secondary);
-      font-size: 0.82rem;
+
+    :root {
+      --black: #0a0a0a;
+      --black-nav: #111214;
+      --white: #ffffff;
+      --off-white: #f8f8f6;
+      --light-gray: #f2f2ef;
+      --border: #d4d4ce;
+      --border-dark: #2a2a2e;
+      --text-primary: #111214;
+      --text-secondary: #555555;
+      --text-muted: #888888;
+      --accent: #0057b8;
+      --red: #c8232c;
+      --font-sans: 'Nunito Sans', sans-serif;
+      --font-display: 'Space Grotesk', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--off-white);
+      color: var(--text-primary);
+    }
+
+    /* ── NAV ── */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
       display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 56px;
+      height: 64px;
+      background: var(--black-nav);
+      border-bottom: 1px solid var(--border-dark);
     }
-    .preview-list {
-      display: grid;
-      gap: 10px;
-    }
-    .preview-item {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: linear-gradient(180deg, rgba(22,27,34,.96), rgba(13,17,23,.96));
-      padding: 12px;
-    }
-    .preview-item h3 {
-      margin: 0 0 8px;
-      font-size: 0.96rem;
+
+    .brand {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--white);
+      text-transform: uppercase;
+      text-decoration: none;
       display: flex;
       align-items: center;
       gap: 10px;
+    }
+
+    .brand-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: #777;
+      border: 1px solid #333;
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+
+    .nav-link {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: #aaa;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-link:hover {
+      color: var(--white);
+    }
+
+    /* ── LAYOUT ── */
+    .wrap {
+      width: min(1200px, 100% - 64px);
+      margin: 32px auto 48px;
+    }
+
+    /* ── SUMMARY CARD ── */
+    .summary-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 28px 32px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
       flex-wrap: wrap;
     }
-    .preview-item p {
-      margin: 6px 0;
-      color: var(--text-secondary);
-      font-size: 0.86rem;
+
+    .summary-left h1 {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--black);
+      letter-spacing: -0.01em;
+      margin-bottom: 12px;
     }
-    .preview-item pre {
-      margin: 8px 0 0;
-      background: rgba(10, 14, 23, 0.8);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 8px;
-      padding: 10px;
-      color: #d8e5f5;
-      font-size: 0.78rem;
+
+    .summary-meta {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .meta-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .meta-value {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .risk-badge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 24px;
+      min-width: 100px;
+      text-align: center;
+      background: var(--off-white);
+    }
+
+    .risk-score {
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--red);
+      line-height: 1;
+    }
+
+    .risk-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .btn-dl {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--black-nav);
+      border: 1px solid var(--border-dark);
+      color: var(--white);
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 12px 22px;
+      border-radius: 4px;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+
+    .btn-dl:hover {
+      background: #222;
+    }
+
+    .btn-area {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      flex-direction: column;
+    }
+
+    /* ── FINDINGS LIST ── */
+    .findings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .findings-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--black);
+      letter-spacing: 0.02em;
+    }
+
+    .findings-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .findings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ── FINDING ITEM ── */
+    .finding-item {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .finding-item:hover {
+      border-color: #bbb;
+    }
+
+    .finding-item-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .sev-chip {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      padding: 3px 9px;
+      border-radius: 3px;
+      border: 1px solid;
+      flex-shrink: 0;
+    }
+
+    .sev-chip.critical {
+      color: #c8232c;
+      border-color: #c8232c;
+    }
+
+    .sev-chip.high {
+      color: #d97706;
+      border-color: #d97706;
+    }
+
+    .sev-chip.medium {
+      color: #ca8a04;
+      border-color: #ca8a04;
+    }
+
+    .sev-chip.low {
+      color: #16a34a;
+      border-color: #16a34a;
+    }
+
+    .sev-chip.info {
+      color: #2563eb;
+      border-color: #2563eb;
+    }
+
+    .finding-item-title {
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      flex: 1;
+    }
+
+    .tag {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+
+    .finding-item-body {
+      padding: 16px 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .fi-field label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .fi-field p,
+    .fi-field span {
+      font-size: 13px;
+      font-weight: 300;
+      line-height: 1.65;
+      color: var(--text-secondary);
+    }
+
+    .fi-field .mono {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-primary);
+    }
+
+    .fi-field pre {
+      margin-top: 8px;
+      background: var(--black-nav);
+      border: 1px solid var(--border-dark);
+      border-radius: 4px;
+      padding: 12px 16px;
       overflow-x: auto;
+    }
+
+    .fi-field pre code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #ccc;
+      line-height: 1.7;
+    }
+
+    .fi-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .compliance-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+      grid-column: 1 / -1;
+    }
+
+    .ctl {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--black);
+      border: 1px solid var(--border-dark);
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+
+    .confidence {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    /* ── EMPTY ── */
+    .empty {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    /* ── FOOTER ── */
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 56px;
+      background: var(--black-nav);
+      border-top: 1px solid var(--border-dark);
+    }
+
+    .footer p {
+      font-size: 12px;
+      color: #555;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .footer-links a {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #888;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--white);
+    }
+
+    @media (max-width: 768px) {
+      .nav {
+        padding: 0 20px;
+      }
+
+      .wrap {
+        width: calc(100% - 32px);
+        margin: 20px auto 32px;
+      }
+
+      .finding-item-body {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-card {
+        flex-direction: column;
+      }
+
+      .footer {
+        flex-direction: column;
+        gap: 12px;
+        padding: 20px;
+        text-align: center;
+      }
     }
   </style>
 </head>
-<body class="dashboard-body">
-  <div class="bg-grid"></div>
+
+<body>
   <header class="nav">
-    <a class="brand" href="/">SECUREPATH</a>
+    <a class="brand" href="/"><span class="brand-dot"></span>SECUREPATH</a>
     <div class="nav-right">
       <span class="badge">Report Preview</span>
-      <a class="nav-link" href="/scan/{{ scan['id'] }}">Back to Dashboard</a>
+      <a class="nav-link" href="/scan/{{ scan['id'] }}">← Dashboard</a>
     </div>
   </header>
 
-  <main class="preview-wrap">
-    <section class="card">
-      <div class="preview-head">
-        <h1>Report Preview</h1>
-        <a class="btn btn-primary" href="/api/scan/{{ scan['id'] }}/download">Download PDF</a>
-      </div>
-      <div class="preview-meta">
-        <span>Repo: <b>{{ scan['repo_name'] or scan['repo_url'] }}</b></span>
-        <span>Commit: <b class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</b></span>
-        <span>Risk score: <b>{{ scan['risk_score'] or 0 }}</b></span>
-        <span>Total findings: <b>{{ scan['findings_count'] or findings|length }}</b></span>
-      </div>
-    </section>
+  <main>
+    <div class="wrap">
 
-    <section class="preview-list">
+      <!-- Summary -->
+      <div class="summary-card">
+        <div class="summary-left">
+          <h1>Security Report</h1>
+          <div class="summary-meta">
+            <div class="meta-item">
+              <span class="meta-label">Repository</span>
+              <span class="meta-value">{{ scan['repo_name'] or scan['repo_url'] }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Commit</span>
+              <span class="meta-value">{{ (scan['commit_sha'] or 'pending')[:12] }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Total Findings</span>
+              <span class="meta-value">{{ scan['findings_count'] or findings|length }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="btn-area">
+          <div class="risk-badge">
+            <span class="risk-score">{{ scan['risk_score'] or 0 }}</span>
+            <span class="risk-label">Risk Score</span>
+          </div>
+          <a class="btn-dl" href="/api/scan/{{ scan['id'] }}/download">↓ Download PDF</a>
+        </div>
+      </div>
+
+      <!-- Findings -->
       {% if findings %}
+      <div class="findings-header">
+        <span class="findings-title">Findings</span>
+        <span class="findings-count">{{ findings|length }} issues identified</span>
+      </div>
+      <div class="findings-list">
         {% for f in findings %}
-          <article class="preview-item">
-            <h3>
-              <span class="severity-chip {{ f['severity']|lower }}">{{ f['severity']|upper }}</span>
-              {{ f['raw_title'] or 'Untitled finding' }}
-              <span class="tag">{{ f['cwe_id'] or 'CWE-Unknown' }}</span>
-            </h3>
-            <p><b>Location:</b> <span class="mono">{{ f['file_path'] }}:{{ f['line_start'] }}-{{ f['line_end'] }}</span></p>
-            <p><b>Category:</b> {{ f['category'] }} | <b>OWASP:</b> {{ f['owasp_category'] or 'Unknown' }}</p>
-            <p><b>Plain English:</b> {{ f['plain_english'] or 'Pending enrichment' }}</p>
-            <p><b>Business Risk:</b> {{ f['business_risk'] or 'Pending enrichment' }}</p>
-            <p><b>Compliance:</b> {{ f['soc2_controls'] or 'Not mapped' }} | <b>Confidence:</b> {{ f['confidence_score'] or 'n/a' }}/10</p>
-            <pre><code>{{ f['code_snippet'] or 'No snippet available' }}</code></pre>
-          </article>
+        <article class="finding-item">
+          <div class="finding-item-header">
+            <span class="sev-chip {{ f['severity']|lower }}">{{ f['severity']|upper }}</span>
+            <span class="finding-item-title">{{ f['raw_title'] or 'Untitled finding' }}</span>
+            <span class="tag">{{ f['cwe_id'] or 'CWE-?' }}</span>
+            <span class="tag">{{ f['owasp_category'] or '—' }}</span>
+          </div>
+          <div class="finding-item-body">
+            <div class="fi-field">
+              <label>Location</label>
+              <span class="mono">{{ f['file_path'] }}:{{ f['line_start'] }}–{{ f['line_end'] }}</span>
+            </div>
+            <div class="fi-field">
+              <label>Category</label>
+              <p>{{ f['category'] }}</p>
+            </div>
+            <div class="fi-field">
+              <label>Plain English</label>
+              <p>{{ f['plain_english'] or 'Pending enrichment' }}</p>
+            </div>
+            <div class="fi-field">
+              <label>Business Risk</label>
+              <p>{{ f['business_risk'] or 'Pending enrichment' }}</p>
+            </div>
+            <div class="fi-field full">
+              <label>Code Snippet</label>
+              <pre><code>{{ f['code_snippet'] or 'No snippet available' }}</code></pre>
+            </div>
+            <div class="compliance-row">
+              {% if f['soc2_controls'] %}
+              {% for ctl in f['soc2_controls'].split(',') %}
+              <span class="ctl">{{ ctl.strip() }}</span>
+              {% endfor %}
+              {% endif %}
+              <span class="confidence">Confidence: {{ f['confidence_score'] or 'n/a' }}/10</span>
+            </div>
+          </div>
+        </article>
         {% endfor %}
+      </div>
       {% else %}
-        <section class="card">
-          <p class="tiny-muted">No findings available yet. Start a scan or wait for enrichment to complete.</p>
-        </section>
+      <div class="empty">
+        <p>No findings available yet. Start a scan or wait for enrichment to complete.</p>
+      </div>
       {% endif %}
-    </section>
+
+    </div>
   </main>
+
+  <footer class="footer">
+    <p>Built for engineering teams serious about security</p>
+    <div class="footer-links">
+      <a href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="mailto:contact@securepath.dev">Contact</a>
+    </div>
+  </footer>
 </body>
+
 </html>

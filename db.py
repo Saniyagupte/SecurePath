@@ -180,6 +180,7 @@ FINDING_FIELDS = {
     "soc2_controls", "confidence_score", "false_positive_risk",
     "false_positive_reason", "enrichment_status", "created_at",
     "business_impact_json", "assets_exposed_json",
+    "compliance_readiness_json", "developer_action_json", "cto_summary",
 }
 
 
@@ -241,6 +242,9 @@ def init_db() -> None:
               enrichment_status    TEXT DEFAULT 'pending',
               business_impact_json TEXT,
               assets_exposed_json  TEXT,
+              compliance_readiness_json TEXT,
+              developer_action_json TEXT,
+              cto_summary          TEXT,
               created_at           TEXT,
               FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
             )
@@ -382,6 +386,9 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
         "enrichment_status":    finding_dict.get("enrichment_status", "pending"),
         "business_impact_json": finding_dict.get("business_impact_json"),
         "assets_exposed_json":  finding_dict.get("assets_exposed_json"),
+        "compliance_readiness_json": finding_dict.get("compliance_readiness_json"),
+        "developer_action_json": finding_dict.get("developer_action_json"),
+        "cto_summary":           finding_dict.get("cto_summary"),
         "created_at":           created_at,
     }
 
@@ -395,6 +402,7 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
               exploit_scenario, remediation_json, soc2_controls,
               confidence_score, false_positive_risk, false_positive_reason,
               enrichment_status, business_impact_json, assets_exposed_json,
+              compliance_readiness_json, developer_action_json, cto_summary,
               created_at
             ) VALUES (
               :id, :scan_id, :pass_name, :file_path, :line_start, :line_end,
@@ -403,6 +411,7 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
               :exploit_scenario, :remediation_json, :soc2_controls,
               :confidence_score, :false_positive_risk, :false_positive_reason,
               :enrichment_status, :business_impact_json, :assets_exposed_json,
+              :compliance_readiness_json, :developer_action_json, :cto_summary,
               :created_at
             )
             """,

@@ -209,13 +209,29 @@ Use this exact schema:
     "exploitation_likelihood": "low or medium or high",
     "likelihood_reason": "One sentence why, based on the specific code shown"
   }},
-  "assets_exposed": {{
-    "data_types": ["specific data types at risk: PII, credentials, financial data, API keys, session tokens, etc"],
-    "systems_affected": ["specific systems or services at risk based on file path and code context"],
-    "exposure_scope": "internal_only or external_facing or third_party_accessible",
-    "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
     "estimated_records_at_risk": "rough estimate or unknown"
-  }}
+  }},
+  "compliance_readiness": {{
+    "soc2_status": "violated/at_risk/compliant",
+    "soc2_control": "Specific CC control violated e.g. CC6.1",
+    "iso27001_status": "violated/at_risk/not_applicable",
+    "iso27001_control": "Specific clause e.g. A.9.4.1 or not_applicable",
+    "gdpr_status": "violated/at_risk/not_applicable",
+    "gdpr_article": "Specific article e.g. Article 32 or not_applicable",
+    "preventive_recommendation": "What CI/CD check, pre-commit hook, or process would have caught this before it reached the codebase"
+  }},
+  "developer_action": {{
+    "fix_before_deployment": true,
+    "reason": "One sentence why urgency level is what it is",
+    "estimated_fix_time_minutes": 60,
+    "skill_required": "junior/mid/senior",
+    "specific_steps": [
+      "Step 1 with exact command or code change",
+      "Step 2 with exact command or code change",
+      "Step 3 with exact command or code change"
+    ]
+  }},
+  "plain_english_for_cto": "One sentence a non-technical founder can understand immediately. What they could lose. No jargon."
 }}"""
 
         last_error: Exception | None = None
@@ -332,6 +348,18 @@ Use this exact schema:
         if not isinstance(assets_exposed, dict) or not assets_exposed:
             assets_exposed = base.get("assets_exposed", {})
 
+        # Merge compliance_readiness
+        compliance_readiness = enrichment.get("compliance_readiness")
+        if not isinstance(compliance_readiness, dict) or not compliance_readiness:
+            compliance_readiness = base.get("compliance_readiness", {})
+
+        # Merge developer_action
+        developer_action = enrichment.get("developer_action")
+        if not isinstance(developer_action, dict) or not developer_action:
+            developer_action = base.get("developer_action", {})
+
+        cto_summary = enrichment.get("plain_english_for_cto") or base.get("cto_summary", "")
+
         merged.update(
             {
                 "plain_english": str(enrichment.get("plain_english") or base.get("plain_english"))[:800],
@@ -348,6 +376,9 @@ Use this exact schema:
                 "business_impact_json": json.dumps(business_impact),
                 "assets_exposed": assets_exposed,
                 "assets_exposed_json": json.dumps(assets_exposed),
+                "compliance_readiness_json": json.dumps(compliance_readiness),
+                "developer_action_json": json.dumps(developer_action),
+                "cto_summary": str(cto_summary)[:800],
                 "enrichment_failed": enrichment_failed,
                 "enrichment_status": "failed" if enrichment_failed else "complete",
             }
@@ -416,6 +447,9 @@ Use this exact schema:
                 "business_impact_json": json.dumps(business_impact),
                 "assets_exposed": assets_exposed,
                 "assets_exposed_json": json.dumps(assets_exposed),
+                "compliance_readiness": self._template_compliance_readiness(mapped),
+                "developer_action": self._template_developer_action(mapped),
+                "cto_summary": self._template_cto_summary(mapped),
                 "enrichment_failed": False,
                 "enrichment_status": "complete",
             }
@@ -838,3 +872,33 @@ Use this exact schema:
             "exposure_explanation": exposure_map.get(category, exposure_map["misc"]),
             "estimated_records_at_risk": "unknown",
         }
+
+    def _template_compliance_readiness(self, finding: dict) -> dict:
+        mapping = get_soc2_mapping_for_finding(finding)
+        return {
+            "soc2_status": "at_risk",
+            "soc2_control": mapping["controls"][0] if mapping["controls"] else "CC6.1",
+            "iso27001_status": "at_risk",
+            "iso27001_control": "A.12.1.1",
+            "gdpr_status": "not_applicable",
+            "gdpr_article": "not_applicable",
+            "preventive_recommendation": "Implement security linting in the pre-commit hook phase to catch these patterns before code is committed."
+        }
+
+    def _template_developer_action(self, finding: dict) -> dict:
+        severity = str(finding.get("severity", "medium")).lower()
+        return {
+            "fix_before_deployment": severity in ["critical", "high"],
+            "reason": f"Severity level is {severity.upper()}. Critical risks must be addressed before production deployment to maintain baseline security.",
+            "estimated_fix_time_minutes": 45 if severity in ["critical", "high"] else 20,
+            "skill_required": "mid" if severity in ["critical", "high"] else "junior",
+            "specific_steps": [
+                "Locate the vulnerability in the highlighted line.",
+                "Review the remediation tab for the specific secure coding pattern.",
+                "Apply the fix and run a regression scan to verify containment."
+            ]
+        }
+
+    def _template_cto_summary(self, finding: dict) -> str:
+        plain = str(finding.get("plain_english", "A security risk was found."))
+        return f"This issue could lead to unauthorized access to our production systems or customer data, potentially causing financial loss and brand damage."

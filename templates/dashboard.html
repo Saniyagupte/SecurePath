@@ -3,158 +3,493 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SecurePath Scan Dashboard</title>
-  <meta name="description" content="Live scan dashboard for SecurePath SOC2 evidence generation.">
+  <title>SecurePath — Scan Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,300;0,6..12,400;0,6..12,600;0,6..12,700;0,6..12,800&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black: #0a0a0a;
+      --black-nav: #111214;
+      --white: #ffffff;
+      --off-white: #f8f8f6;
+      --light-gray: #f2f2ef;
+      --border: #d4d4ce;
+      --border-dark: #2a2a2e;
+      --text-primary: #111214;
+      --text-secondary: #555555;
+      --text-muted: #888888;
+      --accent: #0057b8;
+      --accent-light: #e8f0fc;
+      --red: #c8232c;
+      --red-light: #fdf2f2;
+      --amber: #d97706;
+      --amber-light: #fffbeb;
+      --green: #16a34a;
+      --green-light: #f0fdf4;
+      --font-sans: 'Nunito Sans', sans-serif;
+      --font-display: 'Space Grotesk', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font-sans); background: var(--off-white); color: var(--text-primary); min-height: 100vh; }
+
+    /* ── NAV ── */
+    .nav {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 40px; height: 64px;
+      background: var(--black-nav); border-bottom: 1px solid var(--border-dark);
+    }
+    .brand {
+      font-family: var(--font-display); font-size: 15px; font-weight: 700;
+      letter-spacing: 0.1em; color: var(--white); text-transform: uppercase;
+      text-decoration: none; display: flex; align-items: center; gap: 10px;
+    }
+    .brand-dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
+    .nav-center {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--font-mono); font-size: 11px; color: #666;
+    }
+    .nav-center .sep { color: #333; }
+    .nav-center .repo-name { color: #aaa; font-weight: 600; }
+    .nav-right { display: flex; align-items: center; gap: 16px; }
+    .badge { font-family: var(--font-mono); font-size: 10px; color: #777; border: 1px solid #333; padding: 3px 8px; border-radius: 3px; }
+    .nav-link { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #aaa; text-decoration: none; transition: color 0.2s; }
+    .nav-link:hover { color: var(--white); }
+
+    /* ── STATUS BAR ── */
+    .status-bar {
+      background: var(--white); border-bottom: 1px solid var(--border);
+      padding: 0 40px; display: flex; align-items: center; gap: 24px;
+      height: 48px;
+    }
+    .status-indicator { display: flex; align-items: center; gap: 8px; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .pulse-dot.running { background: var(--accent); animation: pulse 1.5s ease-in-out infinite; }
+    .pulse-dot.complete { background: var(--green); }
+    .pulse-dot.failed { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .status-text { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+    .status-divider { width: 1px; height: 20px; background: var(--border); }
+    .status-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+
+    /* ── LAYOUT ── */
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 0;
+      min-height: calc(100vh - 112px);
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      background: var(--white); border-right: 1px solid var(--border);
+      padding: 24px 0; display: flex; flex-direction: column; gap: 0;
+    }
+    .sidebar-section { padding: 0 0 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .sidebar-section:last-child { border-bottom: none; margin-bottom: 0; }
+    .sidebar-label {
+      font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+      letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-muted);
+      padding: 0 24px; margin-bottom: 10px;
+    }
+    .sidebar-stat { padding: 8px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .sidebar-stat-label { font-size: 13px; color: var(--text-secondary); }
+    .sidebar-stat-value { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--text-primary); }
+    .sidebar-stat-value.red { color: var(--red); }
+    .sidebar-stat-value.amber { color: var(--amber); }
+    .sidebar-stat-value.green { color: var(--green); }
+
+    .sev-bar { padding: 6px 24px; }
+    .sev-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .sev-bar-label { font-family: var(--font-mono); font-size: 10px; width: 64px; color: var(--text-muted); }
+    .sev-bar-track { flex: 1; height: 4px; background: var(--light-gray); border-radius: 2px; overflow: hidden; }
+    .sev-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+    .sev-bar-fill.critical { background: var(--red); }
+    .sev-bar-fill.high { background: var(--amber); }
+    .sev-bar-fill.medium { background: #ca8a04; }
+    .sev-bar-fill.low { background: var(--green); }
+    .sev-bar-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); width: 20px; text-align: right; }
+
+    .sidebar-nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 24px; font-size: 13px; font-weight: 600; color: var(--text-secondary);
+      cursor: pointer; transition: background 0.15s, color 0.15s; user-select: none;
+      border-left: 3px solid transparent;
+    }
+    .sidebar-nav-item:hover { background: var(--off-white); color: var(--text-primary); }
+    .sidebar-nav-item.active { background: var(--accent-light); color: var(--accent); border-left-color: var(--accent); }
+    .sidebar-nav-item .item-icon { font-size: 14px; }
+    .sidebar-nav-item .item-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-left: auto; }
+
+    /* ── MAIN CONTENT ── */
+    .main-content { padding: 28px 32px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── METRIC CARDS ── */
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .metric-card {
+      background: var(--white); border: 1px solid var(--border); border-radius: 6px;
+      padding: 20px 24px; position: relative; overflow: hidden;
+    }
+    .metric-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    }
+    .metric-card.critical::before { background: var(--red); }
+    .metric-card.high::before { background: var(--amber); }
+    .metric-card.info::before { background: var(--accent); }
+    .metric-card.score::before { background: var(--black-nav); }
+    .metric-label { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .metric-value { font-family: var(--font-display); font-size: 36px; font-weight: 700; line-height: 1; color: var(--text-primary); }
+    .metric-value.red { color: var(--red); }
+    .metric-value.amber { color: var(--amber); }
+    .metric-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 6px; }
+
+    /* ── PROGRESS CARD ── */
+    .progress-card {
+      background: var(--white); border: 1px solid var(--border); border-radius: 6px; padding: 20px 24px;
+    }
+    .progress-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .progress-card-title { font-family: var(--font-display); font-size: 14px; font-weight: 700; color: var(--black); }
+    .progress-card-pct { font-family: var(--font-mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+    .progress-passes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .pass-item { text-align: center; }
+    .pass-icon {
+      width: 36px; height: 36px; border-radius: 50%; margin: 0 auto 6px;
+      border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+      font-size: 14px; transition: all 0.3s;
+    }
+    .pass-icon.done { background: var(--black-nav); border-color: var(--black-nav); color: var(--white); }
+    .pass-icon.running { background: var(--accent-light); border-color: var(--accent); animation: pulse 1.5s ease-in-out infinite; }
+    .pass-icon.pending { background: var(--light-gray); color: var(--text-muted); }
+    .pass-name { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
+
+    /* ── FINDINGS TABLE ── */
+    .table-card {
+      background: var(--white); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .table-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .table-title { font-family: var(--font-display); font-size: 14px; font-weight: 700; color: var(--black); }
+    .table-actions { display: flex; gap: 8px; }
+    .filter-btn {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
+      padding: 5px 12px; border: 1px solid var(--border); border-radius: 3px;
+      background: var(--off-white); color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
+    }
+    .filter-btn:hover, .filter-btn.active { background: var(--black-nav); color: var(--white); border-color: var(--black-nav); }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left; padding: 10px 20px;
+      font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted);
+      background: var(--off-white); border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid var(--light-gray); transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--off-white); }
+    tbody td { padding: 12px 20px; font-size: 13px; color: var(--text-secondary); vertical-align: middle; }
+    .td-title { font-weight: 600; color: var(--text-primary); max-width: 280px; }
+    .td-mono { font-family: var(--font-mono); font-size: 11px; }
+    .td-tag { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); padding: 2px 7px; border-radius: 3px; white-space: nowrap; }
+
+    .sev-pill {
+      display: inline-block; font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+      letter-spacing: 0.15em; padding: 3px 9px; border-radius: 3px; border: 1px solid; white-space: nowrap;
+    }
+    .sev-pill.critical { color: var(--red); border-color: var(--red); }
+    .sev-pill.high { color: var(--amber); border-color: var(--amber); }
+    .sev-pill.medium { color: #ca8a04; border-color: #ca8a04; }
+    .sev-pill.low { color: var(--green); border-color: var(--green); }
+
+    /* ── ACTIONS ── */
+    .action-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--font-display); font-size: 12px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase; padding: 11px 20px;
+      border-radius: 4px; text-decoration: none; cursor: pointer; transition: all 0.15s; border: 1px solid;
+    }
+    .btn-primary { background: var(--black-nav); border-color: var(--black-nav); color: var(--white); }
+    .btn-primary:hover { background: #222; }
+    .btn-outline { background: transparent; border-color: var(--border); color: var(--text-primary); }
+    .btn-outline:hover { background: var(--off-white); border-color: #aaa; }
+
+    /* ── FOOTER ── */
+    .footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 40px; background: var(--black-nav); border-top: 1px solid var(--border-dark);
+    }
+    .footer p { font-size: 12px; color: #555; }
+    .footer-links { display: flex; gap: 24px; }
+    .footer-links a { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #888; text-decoration: none; transition: color 0.2s; }
+    .footer-links a:hover { color: var(--white); }
+
+    @media (max-width: 1024px) {
+      .dashboard-layout { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+      .metric-row { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .nav { padding: 0 20px; }
+      .nav-center { display: none; }
+      .main-content { padding: 20px 16px; }
+      .metric-row { grid-template-columns: 1fr 1fr; }
+      .progress-passes { grid-template-columns: repeat(3, 1fr); }
+      .footer { flex-direction: column; gap: 12px; padding: 18px 20px; text-align: center; }
+    }
+  </style>
 </head>
-<body class="dashboard-body">
-  <div class="bg-grid"></div>
+<body>
   <header class="nav">
-    <a class="brand" href="/">SECUREPATH</a>
+    <a class="brand" href="/"><span class="brand-dot"></span>SECUREPATH</a>
+    <div class="nav-center">
+      <span>scan</span>
+      <span class="sep">/</span>
+      <span class="repo-name">{{ scan['repo_name'] or scan['repo_url'] }}</span>
+    </div>
     <div class="nav-right">
-      <span class="badge">Scan Dashboard</span>
-      <a class="nav-link" href="/">New Scan</a>
+      <span class="badge">{{ scan['status']|upper or 'RUNNING' }}</span>
+      <a class="nav-link" href="/">← New Scan</a>
     </div>
   </header>
 
-  <main class="dashboard-main" data-scan-id="{{ scan['id'] }}">
-    <section id="state-scanning" class="state-pane">
-      <div class="progress-wrap">
-        <div class="progress-track">
-          <div id="progress-bar" class="progress-fill" style="width: {{ scan['progress'] or 0 }}%;"></div>
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-indicator">
+      <span class="pulse-dot {{ 'running' if scan['status'] == 'running' else ('complete' if scan['status'] == 'complete' else 'failed') }}"></span>
+      <span class="status-text">{{ scan['status']|upper or 'INITIALIZING' }}</span>
+    </div>
+    <span class="status-divider"></span>
+    <span class="status-meta">Commit: {{ (scan['commit_sha'] or 'pending')[:12] }}</span>
+    <span class="status-divider"></span>
+    <span class="status-meta">{{ scan['repo_url'] }}</span>
+    {% if scan['status'] == 'complete' %}
+      <span class="status-divider"></span>
+      <a class="nav-link" href="/scan/{{ scan['id'] }}/preview" style="color: var(--accent);">View Full Report →</a>
+    {% endif %}
+  </div>
+
+  <div class="dashboard-layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Scan Summary</div>
+        <div class="sidebar-stat">
+          <span class="sidebar-stat-label">Total Findings</span>
+          <span class="sidebar-stat-value">{{ scan['findings_count'] or 0 }}</span>
         </div>
-        <div id="step-label" class="progress-step">{{ scan['current_step'] or 'Initializing scan...' }}</div>
-      </div>
-
-      <div class="scan-layout">
-        <aside class="card scan-meta-card">
-          <h2>Scan Metadata</h2>
-          <dl class="meta-grid">
-            <dt>Repo</dt>
-            <dd id="meta-repo">{{ scan['repo_name'] or scan['repo_url'] }}</dd>
-            <dt>Commit</dt>
-            <dd id="meta-sha" class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</dd>
-            <dt>Started</dt>
-            <dd id="meta-started">{{ scan['created_at'] or 'pending' }}</dd>
-            <dt>Status</dt>
-            <dd><span id="status-badge" class="status-badge pulsing">{{ scan['status'] or 'queued' }}</span></dd>
-          </dl>
-        </aside>
-
-        <section class="card live-feed">
-          <div class="card-header-row">
-            <h2>Live Findings Feed</h2>
-            <span class="tiny-muted">Updates every 2s</span>
-          </div>
-          <div id="live-feed-list" class="live-feed-list">
-            <div id="waiting-feed" class="empty-note">Waiting for first findings...</div>
-          </div>
-          <p class="bottom-note">
-            Findings will appear as they are discovered. AI enrichment runs in parallel.
-          </p>
-        </section>
-      </div>
-    </section>
-
-    <section id="state-complete" class="state-pane hidden">
-      <div class="card metrics-bar">
-        <div class="metric-left">
-          <div class="risk-block">
-            <div class="risk-label">Risk Score</div>
-            <div id="risk-score" class="risk-score">0</div>
-          </div>
-          <div class="sev-counts">
-            <span class="sev-pill critical">CRITICAL: <b id="count-critical">0</b></span>
-            <span class="sev-pill high">HIGH: <b id="count-high">0</b></span>
-            <span class="sev-pill medium">MEDIUM: <b id="count-medium">0</b></span>
-            <span class="sev-pill low">LOW: <b id="count-low">0</b></span>
-          </div>
-          <div class="meta-inline">
-            <span>Repo: <b id="repo-inline">{{ scan['repo_name'] or scan['repo_url'] }}</b></span>
-            <span>Commit: <b id="sha-inline" class="mono">{{ (scan['commit_sha'] or 'pending')[:12] }}</b></span>
-            <span>Duration: <b id="duration-inline">calculating...</b></span>
-            <span>Total findings: <b id="total-inline">{{ scan['findings_count'] or 0 }}</b></span>
-          </div>
+        <div class="sidebar-stat">
+          <span class="sidebar-stat-label">Risk Score</span>
+          <span class="sidebar-stat-value red">{{ scan['risk_score'] or 0 }}/100</span>
         </div>
-        <div class="metric-actions">
-          <a id="download-btn" class="btn btn-primary" href="/api/scan/{{ scan['id'] }}/download">DOWNLOAD AUDIT REPORT PDF</a>
-          <a id="preview-btn" class="btn btn-secondary" href="/scan/{{ scan['id'] }}/preview">Preview Report</a>
+        <div class="sidebar-stat">
+          <span class="sidebar-stat-label">Files Scanned</span>
+          <span class="sidebar-stat-value">{{ scan['files_scanned'] or '—' }}</span>
         </div>
       </div>
 
-      <section class="card">
-        <div class="card-header-row">
-          <h2>OWASP Top 10 Coverage</h2>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Severity Breakdown</div>
+        <div class="sev-bar">
+          <div class="sev-bar-row">
+            <span class="sev-bar-label">Critical</span>
+            <div class="sev-bar-track"><div class="sev-bar-fill critical" style="width: {{ [((scan['critical_count'] or 0) / [(scan['findings_count'] or 1), 1]|max) * 100, 100]|min }}%"></div></div>
+            <span class="sev-bar-count">{{ scan['critical_count'] or 0 }}</span>
+          </div>
+          <div class="sev-bar-row">
+            <span class="sev-bar-label">High</span>
+            <div class="sev-bar-track"><div class="sev-bar-fill high" style="width: {{ [((scan['high_count'] or 0) / [(scan['findings_count'] or 1), 1]|max) * 100, 100]|min }}%"></div></div>
+            <span class="sev-bar-count">{{ scan['high_count'] or 0 }}</span>
+          </div>
+          <div class="sev-bar-row">
+            <span class="sev-bar-label">Medium</span>
+            <div class="sev-bar-track"><div class="sev-bar-fill medium" style="width: {{ [((scan['medium_count'] or 0) / [(scan['findings_count'] or 1), 1]|max) * 100, 100]|min }}%"></div></div>
+            <span class="sev-bar-count">{{ scan['medium_count'] or 0 }}</span>
+          </div>
+          <div class="sev-bar-row">
+            <span class="sev-bar-label">Low</span>
+            <div class="sev-bar-track"><div class="sev-bar-fill low" style="width: {{ [((scan['low_count'] or 0) / [(scan['findings_count'] or 1), 1]|max) * 100, 100]|min }}%"></div></div>
+            <span class="sev-bar-count">{{ scan['low_count'] or 0 }}</span>
+          </div>
         </div>
-        <div id="owasp-grid" class="owasp-grid">
-          <div class="owasp-box" data-cat="A01:2021 - Broken Access Control"><span>A01</span> Broken Access Control</div>
-          <div class="owasp-box" data-cat="A02:2021 - Cryptographic Failures"><span>A02</span> Cryptographic Failures</div>
-          <div class="owasp-box" data-cat="A03:2021 - Injection"><span>A03</span> Injection</div>
-          <div class="owasp-box" data-cat="A04:2021 - Insecure Design"><span>A04</span> Insecure Design</div>
-          <div class="owasp-box" data-cat="A05:2021 - Security Misconfiguration"><span>A05</span> Security Misconfiguration</div>
-          <div class="owasp-box" data-cat="A06:2021 - Vulnerable and Outdated Components"><span>A06</span> Vulnerable Components</div>
-          <div class="owasp-box" data-cat="A07:2021 - Identification and Authentication Failures"><span>A07</span> Auth Failures</div>
-          <div class="owasp-box" data-cat="A08:2021 - Software and Data Integrity Failures"><span>A08</span> Data Integrity</div>
-          <div class="owasp-box" data-cat="A09:2021 - Security Logging and Monitoring Failures"><span>A09</span> Logging & Monitoring</div>
-          <div class="owasp-box" data-cat="A10:2021 - Server-Side Request Forgery"><span>A10</span> SSRF</div>
-        </div>
-      </section>
+      </div>
 
-      <section class="card findings-card">
-        <div class="card-header-row">
-          <h2>Findings</h2>
-          <div class="sort-hint">Click headers to sort. Click row to expand EXAI details.</div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Quick Filters</div>
+        <div class="sidebar-nav-item active" onclick="filterFindings('all')"><span class="item-icon">⬡</span> All Findings <span class="item-count">{{ scan['findings_count'] or 0 }}</span></div>
+        <div class="sidebar-nav-item" onclick="filterFindings('critical')"><span class="item-icon">●</span> Critical Only <span class="item-count">{{ scan['critical_count'] or 0 }}</span></div>
+        <div class="sidebar-nav-item" onclick="filterFindings('high')"><span class="item-icon">●</span> High Only <span class="item-count">{{ scan['high_count'] or 0 }}</span></div>
+        <div class="sidebar-nav-item" onclick="filterFindings('secrets')"><span class="item-icon">◈</span> Secrets</div>
+        <div class="sidebar-nav-item" onclick="filterFindings('injection')"><span class="item-icon">◈</span> Injection</div>
+      </div>
+
+      <div style="padding: 0 16px; margin-top: auto;">
+        <a class="btn btn-primary" style="width: 100%; justify-content: center; text-align: center;" href="/scan/{{ scan['id'] }}/preview">View Full Report</a>
+        <a class="btn btn-outline" style="width: 100%; justify-content: center; margin-top: 8px; text-align: center;" href="/api/scan/{{ scan['id'] }}/download">↓ Download PDF</a>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main-content">
+
+      <!-- Metrics -->
+      <div class="metric-row">
+        <div class="metric-card critical">
+          <div class="metric-label">Critical</div>
+          <div class="metric-value red">{{ scan['critical_count'] or 0 }}</div>
+          <div class="metric-sub">Immediate action</div>
         </div>
-        <div class="table-wrap">
-          <table id="findings-table">
-            <thead>
+        <div class="metric-card high">
+          <div class="metric-label">High</div>
+          <div class="metric-value amber">{{ scan['high_count'] or 0 }}</div>
+          <div class="metric-sub">Within 7 days</div>
+        </div>
+        <div class="metric-card info">
+          <div class="metric-label">Total Issues</div>
+          <div class="metric-value">{{ scan['findings_count'] or 0 }}</div>
+          <div class="metric-sub">Across all categories</div>
+        </div>
+        <div class="metric-card score">
+          <div class="metric-label">Risk Score</div>
+          <div class="metric-value">{{ scan['risk_score'] or 0 }}</div>
+          <div class="metric-sub">Out of 100</div>
+        </div>
+      </div>
+
+      <!-- Scan progress -->
+      <div class="progress-card">
+        <div class="progress-card-header">
+          <span class="progress-card-title">Analysis Passes</span>
+          <span class="progress-card-pct" id="scan-pct">Running...</span>
+        </div>
+        <div class="progress-passes">
+          <div class="pass-item">
+            <div class="pass-icon done" id="pass-sast">✓</div>
+            <div class="pass-name">SAST</div>
+          </div>
+          <div class="pass-item">
+            <div class="pass-icon done" id="pass-deps">✓</div>
+            <div class="pass-name">CVE Audit</div>
+          </div>
+          <div class="pass-item">
+            <div class="pass-icon running" id="pass-secrets">⟳</div>
+            <div class="pass-name">Secrets</div>
+          </div>
+          <div class="pass-item">
+            <div class="pass-icon pending" id="pass-pattern">○</div>
+            <div class="pass-name">Patterns</div>
+          </div>
+          <div class="pass-item">
+            <div class="pass-icon pending" id="pass-config">○</div>
+            <div class="pass-name">Config</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Findings table -->
+      <div class="table-card">
+        <div class="table-header">
+          <span class="table-title">Findings</span>
+          <div class="table-actions">
+            <button class="filter-btn active" onclick="setFilter(this,'all')">All</button>
+            <button class="filter-btn" onclick="setFilter(this,'critical')">Critical</button>
+            <button class="filter-btn" onclick="setFilter(this,'high')">High</button>
+            <button class="filter-btn" onclick="setFilter(this,'medium')">Medium</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Title</th>
+              <th>Location</th>
+              <th>Category</th>
+              <th>CWE</th>
+            </tr>
+          </thead>
+          <tbody id="findings-tbody">
+            {% if findings %}
+              {% for f in findings %}
+                <tr data-sev="{{ f['severity']|lower }}">
+                  <td><span class="sev-pill {{ f['severity']|lower }}">{{ f['severity']|upper }}</span></td>
+                  <td class="td-title">{{ f['raw_title'] or 'Untitled finding' }}</td>
+                  <td class="td-mono">{{ f['file_path'] }}:{{ f['line_start'] }}</td>
+                  <td>{{ f['category'] }}</td>
+                  <td><span class="td-tag">{{ f['cwe_id'] or '—' }}</span></td>
+                </tr>
+              {% endfor %}
+            {% else %}
               <tr>
-                <th data-sort="severity">Severity</th>
-                <th data-sort="category">Category</th>
-                <th data-sort="file_path">File</th>
-                <th data-sort="line_start">Line</th>
-                <th data-sort="raw_title">Title</th>
-                <th data-sort="soc2_controls">Compliance</th>
-                <th data-sort="confidence_score">Confidence</th>
+                <td colspan="5" style="text-align:center; padding: 40px; color: var(--text-muted); font-family: var(--font-mono); font-size: 12px;">
+                  Awaiting scan results...
+                </td>
               </tr>
-            </thead>
-            <tbody id="findings-body"></tbody>
-          </table>
-        </div>
-      </section>
-    </section>
-
-    <section id="state-error" class="state-pane hidden">
-      <div class="error-card">
-        <h2>Scan Failed</h2>
-        <p id="error-message">An unexpected error occurred.</p>
-        <a class="btn btn-primary" href="/">Try Another Repo</a>
+            {% endif %}
+          </tbody>
+        </table>
       </div>
-    </section>
-  </main>
+
+    </main>
+  </div>
+
+  <footer class="footer">
+    <p>SecurePath — Built for engineering teams serious about security</p>
+    <div class="footer-links">
+      <a href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="mailto:contact@securepath.dev">Contact</a>
+    </div>
+  </footer>
 
   <script>
-    window.__SECUREPATH_BOOTSTRAP__ = {
-      scanId: "{{ scan['id'] }}",
-      initialStatus: "{{ scan['status'] or 'queued' }}",
-      initialProgress: {{ scan['progress'] or 0 }},
-      initialStep: {{ (scan['current_step'] or 'Initializing scan...')|tojson }},
-      createdAt: {{ (scan['created_at'] or '')|tojson }},
-      commitSha: {{ (scan['commit_sha'] or '')|tojson }},
-      repoName: {{ (scan['repo_name'] or scan['repo_url'] or '')|tojson }},
-      counts: {
-        critical: {{ scan['critical_count'] or 0 }},
-        high: {{ scan['high_count'] or 0 }},
-        medium: {{ scan['medium_count'] or 0 }},
-        low: {{ scan['low_count'] or 0 }}
-      },
-      riskScore: {{ scan['risk_score'] or 0 }},
-      totalFindings: {{ scan['findings_count'] or 0 }}
-    };
+    // Filter table rows
+    function setFilter(btn, sev) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filterFindings(sev);
+    }
+
+    function filterFindings(sev) {
+      document.querySelectorAll('#findings-tbody tr[data-sev]').forEach(row => {
+        row.style.display = (sev === 'all' || row.dataset.sev === sev) ? '' : 'none';
+      });
+      // also highlight sidebar
+      document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
+    }
+
+    // Poll for status if scan is still running
+    const scanId = "{{ scan['id'] }}";
+    const isRunning = "{{ scan['status'] }}" !== 'complete' && "{{ scan['status'] }}" !== 'failed';
+
+    if (isRunning) {
+      const poll = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/scan/${scanId}/status`);
+          const data = await res.json();
+          if (data.status === 'complete' || data.status === 'failed') {
+            clearInterval(poll);
+            window.location.reload();
+          }
+          if (data.progress_pct) {
+            document.getElementById('scan-pct').textContent = data.progress_pct + '%';
+          }
+        } catch (e) { /* silently ignore */ }
+      }, 3000);
+    } else {
+      document.getElementById('scan-pct').textContent = '100% Complete';
+      // Mark all passes done
+      document.querySelectorAll('.pass-icon').forEach(el => {
+        el.className = 'pass-icon done';
+        el.textContent = '✓';
+      });
+    }
   </script>
-  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
 </html>
