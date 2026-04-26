@@ -1,0 +1,78 @@
+{
+  "%23tanstack-start-plugin-adapters": {
+    "file": "assets/__23tanstack-start-plugin-adapters-Cwee5PKy.js",
+    "name": "__23tanstack-start-plugin-adapters",
+    "src": "%23tanstack-start-plugin-adapters",
+    "isDynamicEntry": true
+  },
+  "E:/compliancecopilotmvp/frontend/src/style.css": {
+    "file": "assets/style-krVpN5UR.css",
+    "src": "E:/compliancecopilotmvp/frontend/src/style.css"
+  },
+  "_router-FrWqa7lY.js": {
+    "file": "assets/router-FrWqa7lY.js",
+    "name": "router",
+    "isDynamicEntry": true,
+    "imports": [
+      "_worker-entry-Txo-XDQl.js"
+    ],
+    "dynamicImports": [
+      "src/routes/index.tsx?tsr-split=component",
+      "src/routes/scan.$scanId.tsx?tsr-split=component"
+    ],
+    "assets": [
+      "assets/style-krVpN5UR.css"
+    ]
+  },
+  "_worker-entry-Txo-XDQl.js": {
+    "file": "assets/worker-entry-Txo-XDQl.js",
+    "name": "worker-entry",
+    "dynamicImports": [
+      "tanstack-start-manifest:v",
+      "_router-FrWqa7lY.js",
+      "node_modules/@tanstack/react-start/dist/plugin/default-entry/start.ts",
+      "%23tanstack-start-plugin-adapters"
+    ]
+  },
+  "node_modules/@tanstack/react-start/dist/plugin/default-entry/start.ts": {
+    "file": "assets/start-HYkvq4Ni.js",
+    "name": "start",
+    "src": "node_modules/@tanstack/react-start/dist/plugin/default-entry/start.ts",
+    "isDynamicEntry": true
+  },
+  "src/routes/index.tsx?tsr-split=component": {
+    "file": "assets/index-BiW2yaRG.js",
+    "name": "index",
+    "src": "src/routes/index.tsx?tsr-split=component",
+    "isDynamicEntry": true,
+    "imports": [
+      "_worker-entry-Txo-XDQl.js",
+      "_router-FrWqa7lY.js"
+    ]
+  },
+  "src/routes/scan.$scanId.tsx?tsr-split=component": {
+    "file": "assets/scan._scanId-CSB3I7el.js",
+    "name": "scan._scanId",
+    "src": "src/routes/scan.$scanId.tsx?tsr-split=component",
+    "isDynamicEntry": true,
+    "imports": [
+      "_worker-entry-Txo-XDQl.js",
+      "_router-FrWqa7lY.js"
+    ]
+  },
+  "tanstack-start-manifest:v": {
+    "file": "assets/_tanstack-start-manifest_v-DAJ34hyc.js",
+    "name": "_tanstack-start-manifest_v",
+    "src": "tanstack-start-manifest:v",
+    "isDynamicEntry": true
+  },
+  "virtual:cloudflare/worker-entry": {
+    "file": "index.js",
+    "name": "index",
+    "src": "virtual:cloudflare/worker-entry",
+    "isEntry": true,
+    "imports": [
+      "_worker-entry-Txo-XDQl.js"
+    ]
+  }
+}
