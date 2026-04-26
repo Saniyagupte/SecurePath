@@ -38,5 +38,6 @@ ENV DATA_DIR=/data
 EXPOSE 8000
 
 # Use gunicorn with 1 worker and threads to aggressively minimize RAM for the 500MB free tier.
-# init_db() is called via a startup script.
-CMD ["sh", "-c", "python -c 'from db import init_db; init_db()' && gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 300 --access-logfile - app:app"]
+# init_db() runs best-effort before gunicorn — if it fails, gunicorn still starts so
+# Render detects the port. The app will retry init_db on first request anyway.
+CMD ["sh", "-c", "python -c 'from db import init_db; init_db()' || echo '[SecurePath] init_db warning — will retry at runtime'; exec gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 300 --access-logfile - app:app"]

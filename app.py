@@ -34,6 +34,12 @@ from scanner import SecurityScanner
 app = Flask(__name__)
 load_dotenv()
 
+# Ensure DB schema is ready when gunicorn imports this module
+try:
+    init_db()
+except Exception as _e:
+    print(f"[SecurePath] init_db at import: {_e}")
+
 # Admin access — set ADMIN_PASSWORD env var on Railway/Render, default is intentionally weak
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
 
