@@ -182,7 +182,7 @@
       font-family: var(--font-display);
       font-size: 36px;
       font-weight: 700;
-      color: var(--red);
+      color: var(--black);
       line-height: 1;
     }
 
@@ -406,6 +406,51 @@
       margin-left: auto;
     }
 
+    /* ── ANALYTICAL LAYERS ── */
+    .layer-cto {
+      grid-column: 1 / -1;
+      background: var(--black-nav);
+      color: var(--white);
+      padding: 18px 24px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .layer-cto label { color: var(--accent) !important; font-size: 8px !important; margin-bottom: 8px !important; }
+    .layer-cto p { color: var(--white) !important; font-weight: 600 !important; font-size: 14px !important; }
+
+    .layer-comp {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+      grid-column: 1 / -1;
+    }
+    .comp-box {
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 4px;
+      background: var(--off-white);
+    }
+    .comp-box label { font-size: 8px !important; }
+    .comp-status { font-family: var(--font-mono); font-size: 11px; font-weight: 700; margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .status-dot.violated { background: var(--red); }
+    .status-dot.at_risk { background: var(--amber); }
+    .status-dot.compliant { background: var(--green); }
+
+    .layer-dev {
+      grid-column: 1 / -1;
+      background: var(--light-gray);
+      padding: 20px;
+      border-radius: 6px;
+      margin-top: 16px;
+      border-left: 4px solid var(--black);
+    }
+    .dev-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .dev-steps { list-style: none; }
+    .dev-step { display: flex; gap: 12px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+    .dev-step-num { font-family: var(--font-mono); font-weight: 700; color: var(--text-muted); }
+
     /* ── EMPTY ── */
     .empty {
       text-align: center;
@@ -532,13 +577,19 @@
             <span class="tag">{{ f['owasp_category'] or '—' }}</span>
           </div>
           <div class="finding-item-body">
+            <!-- CTO STRATEGIC LAYER -->
+            <div class="fi-field layer-cto">
+              <label>Strategic Impact (CTO Summary)</label>
+              <p>{{ f['cto_summary'] or 'Strategic impact evaluation pending.' }}</p>
+            </div>
+
             <div class="fi-field">
               <label>Location</label>
               <span class="mono">{{ f['file_path'] }}:{{ f['line_start'] }}–{{ f['line_end'] }}</span>
             </div>
             <div class="fi-field">
-              <label>Category</label>
-              <p>{{ f['category'] }}</p>
+              <label>Exploit Scenaro</label>
+              <p>{{ f['exploit_scenario'] or '—' }}</p>
             </div>
             <div class="fi-field">
               <label>Plain English</label>
@@ -548,11 +599,60 @@
               <label>Business Risk</label>
               <p>{{ f['business_risk'] or 'Pending enrichment' }}</p>
             </div>
+
             <div class="fi-field full">
               <label>Code Snippet</label>
               <pre><code>{{ f['code_snippet'] or 'No snippet available' }}</code></pre>
             </div>
+
+            <!-- COMPLIANCE READINESS GRID -->
+            <div class="layer-comp">
+              {% set cr = f['compliance_readiness_json']|from_json if f['compliance_readiness_json'] else {} %}
+              <div class="comp-box">
+                <label>SOC2 Status</label>
+                <div class="comp-status">
+                  <span class="status-dot {{ cr.get('soc2_status','at_risk') }}"></span>
+                  {{ (cr.get('soc2_status','At Risk')|upper) }}
+                </div>
+              </div>
+              <div class="comp-box">
+                <label>ISO 27001</label>
+                <div class="comp-status">
+                  <span class="status-dot {{ cr.get('iso27001_status','at_risk') }}"></span>
+                  {{ (cr.get('iso27001_status','At Risk')|upper) }}
+                </div>
+              </div>
+              <div class="comp-box">
+                <label>GDPR Status</label>
+                <div class="comp-status">
+                  <span class="status-dot {{ cr.get('gdpr_status','not_applicable') }}"></span>
+                  {{ (cr.get('gdpr_status','N/A')|upper) }}
+                </div>
+              </div>
+            </div>
+
+            <!-- DEVELOPER ACTION PLAN -->
+            <div class="layer-dev">
+              <div class="dev-header">
+                <label style="margin-bottom: 0;">Developer Action Plan</label>
+                {% set dev = f['developer_action_json']|from_json if f['developer_action_json'] else {} %}
+                <div style="display: flex; gap: 8px;">
+                  <span class="badge" style="background: white">{{ dev.get('estimated_fix_time_minutes', 45) }} MINS</span>
+                  <span class="badge" style="background: white">{{ dev.get('skill_required','Mid')|upper }} SKILL</span>
+                </div>
+              </div>
+              <ul class="dev-steps">
+                {% for step in dev.get('specific_steps', ['Review findings','Apply secure pattern','Verify fix']) %}
+                <li class="dev-step">
+                  <span class="dev-step-num">{{ loop.index }}</span>
+                  <span>{{ step }}</span>
+                </li>
+                {% endfor %}
+              </ul>
+            </div>
+
             <div class="compliance-row">
+              <label style="margin-right: 12px; margin-bottom: 0;">Controls:</label>
               {% if f['soc2_controls'] %}
               {% for ctl in f['soc2_controls'].split(',') %}
               <span class="ctl">{{ ctl.strip() }}</span>

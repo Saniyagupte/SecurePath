@@ -42,6 +42,18 @@ GITHUB_REPO_REGEX = re.compile(
 )
 
 
+@app.template_filter("from_json")
+def from_json_filter(s):
+    if not s:
+        return {}
+    if isinstance(s, dict):
+        return s
+    try:
+        return json.loads(s)
+    except Exception:
+        return {}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -85,7 +97,8 @@ def scan_dashboard(scan_id: str):
     scan = get_scan(scan_id)
     if not scan:
         abort(404)
-    return render_template("dashboard.html", scan=scan)
+    findings = get_findings(scan_id)
+    return render_template("dashboard.html", scan=scan, findings=findings)
 
 
 @app.get("/api/scan/<scan_id>/status")
@@ -387,8 +400,10 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         print(f"[SecurePath] Scan {scan_id} failed: {exc}")
 
 
+# Ensure DB and report directory exist on startup
+init_db()
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
 if __name__ == "__main__":
-    init_db()
-    os.makedirs(REPORTS_DIR, exist_ok=True)
     port = int(os.getenv("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port, threaded=True)

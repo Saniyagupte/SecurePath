@@ -96,6 +96,9 @@ def make_styles():
         "finding_title": ParagraphStyle("finding_title",
             fontName="Helvetica-Bold", fontSize=11, leading=15,
             textColor=NEAR_BLACK, spaceAfter=2),
+        "body_bold": ParagraphStyle("body_bold",
+            fontName="Helvetica-Bold", fontSize=10, leading=14,
+            textColor=NEAR_BLACK, spaceAfter=6),
         "center": ParagraphStyle("center",
             **base, fontSize=10, alignment=TA_CENTER),
         "right": ParagraphStyle("right",
@@ -267,20 +270,16 @@ def _build_header_footer_canvas(report_meta):
 
 
 # ─── REPORT BUILDER ───────────────────────────────────────────────────────────
-class SecurePathReport:
+class AuditReportGenerator:
     """
     Generates a professional audit-ready PDF security report.
-
-    Usage:
-        report = SecurePathReport(scan_data, findings)
-        pdf_bytes = report.generate()
     """
 
-    def __init__(self, scan: dict, findings: list):
-        self.scan = scan
-        self.findings = findings
+    def __init__(self):
         self.styles = make_styles()
         self.finding_counter = 0
+        self.scan = {}
+        self.findings = []
 
     # ── helpers ──
 
@@ -575,6 +574,52 @@ class SecurePathReport:
             ("BOX", (0, 0), (-1, -1), 0.5, RULE_GRAY),
         ]))
         story.append(sev_table)
+        story.append(self._spacer(10))
+
+        # ────────────────────────────────────────────────────────────────
+        # COMPLIANCE READINESS SUMMARY
+        # ────────────────────────────────────────────────────────────────
+        story.append(Paragraph("Compliance Readiness Summary", s("section")))
+        story.append(self._rule(thickness=1, color=NEAR_BLACK, after=8))
+        
+        statuses = {"SOC2": "COMPLIANT", "ISO 27001": "COMPLIANT", "GDPR": "NOT APPLICABLE"}
+        controls = {"SOC2": "—", "ISO 27001": "—", "GDPR": "—"}
+        
+        for f in findings:
+            cr = {}
+            if f.get("compliance_readiness_json"):
+                try: cr = json.loads(f["compliance_readiness_json"])
+                except: pass
+            if cr.get("soc2_status") == "violated": statuses["SOC2"] = "VIOLATED"
+            elif cr.get("soc2_status") == "at_risk" and statuses["SOC2"] != "VIOLATED": statuses["SOC2"] = "AT RISK"
+            if cr.get("soc2_control"): controls["SOC2"] = cr["soc2_control"]
+            if cr.get("iso27001_status") == "violated": statuses["ISO 27001"] = "VIOLATED"
+            elif cr.get("iso27001_status") == "at_risk" and statuses["ISO 27001"] != "VIOLATED": statuses["ISO 27001"] = "AT RISK"
+            if cr.get("iso27001_control") and cr["iso27001_control"] != "not_applicable": controls["ISO 27001"] = cr["iso27001_control"]
+            if cr.get("gdpr_status") == "violated": statuses["GDPR"] = "VIOLATED"
+            elif cr.get("gdpr_status") == "at_risk" and statuses["GDPR"] not in ["VIOLATED", "COMPLIANT"]: statuses["GDPR"] = "AT RISK"
+            elif cr.get("gdpr_status") == "compliant" and statuses["GDPR"] == "NOT APPLICABLE": statuses["GDPR"] = "COMPLIANT"
+            if cr.get("gdpr_article") and cr["gdpr_article"] != "not_applicable": controls["GDPR"] = cr["gdpr_article"]
+
+        cr_data = [
+            [Paragraph("Framework", s("label")), Paragraph("Readiness Status", s("label")), Paragraph("Key Control / Article", s("label"))],
+            [Paragraph("SOC 2 Type II", s("body")), Paragraph(statuses["SOC2"], s("body")), Paragraph(controls["SOC2"], s("mono"))],
+            [Paragraph("ISO 27001:2022", s("body")), Paragraph(statuses["ISO 27001"], s("body")), Paragraph(controls["ISO 27001"], s("mono"))],
+            [Paragraph("GDPR Compliance", s("body")), Paragraph(statuses["GDPR"], s("body")), Paragraph(controls["GDPR"], s("mono"))],
+        ]
+        cr_table = Table(cr_data, colWidths=[50*mm, 50*mm, CONTENT_W - 100*mm])
+        cr_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NEAR_BLACK),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, RULE_GRAY),
+            ("BOX", (0, 0), (-1, -1), 0.5, RULE_GRAY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, OFF_WHITE]),
+        ]))
+        story.append(cr_table)
         story.append(PageBreak())
         return story
 
@@ -704,6 +749,7 @@ class SecurePathReport:
             ("Location",       f"{f.get('file_path', '—')}:{f.get('line_start', '?')}–{f.get('line_end', '?')}",  "mono"),
             ("Category",       f"{f.get('category', '—')} | OWASP: {f.get('owasp_category', '—')}",               "body"),
             ("Explanation",    f.get("plain_english") or "Pending enrichment.",                                     "body"),
+            ("CTO Summary",    f.get("cto_summary") or "Strategic summary pending.",                                 "body_bold" if "body_bold" in self.styles else "body"),
             ("Business Risk",  f.get("business_risk") or "Pending enrichment.",                                     "body"),
             ("Exploit Scenario", f.get("exploit_scenario") or "—",                                                  "body"),
             ("Compliance",     f.get("soc2_controls") or "Not mapped",                                              "mono"),
@@ -763,6 +809,46 @@ class SecurePathReport:
         if conf:
             story.append(self._spacer(1))
             story.append(Paragraph(f"Confidence: {conf}/10", s("right")))
+
+        # Developer Action & Compliance Readiness
+        dev = {}
+        if f.get("developer_action_json"):
+            try: dev = json.loads(f["developer_action_json"])
+            except: pass
+        
+        cr = {}
+        if f.get("compliance_readiness_json"):
+            try: cr = json.loads(f["compliance_readiness_json"])
+            except: pass
+
+        if dev or cr:
+            story.append(self._spacer(4))
+            col_ws = [CONTENT_W * 0.6, CONTENT_W * 0.4]
+            
+            # Developer steps
+            steps_text = "<b>DEVELOPER ACTION PLAN</b><br/>"
+            steps = dev.get("specific_steps", [])
+            for i, st in enumerate(steps[:3], 1):
+                steps_text += f"{i}. {st}<br/>"
+            
+            # Compliance status lines
+            comp_text = "<b>COMPLIANCE READINESS</b><br/>"
+            comp_text += f"SOC2: {str(cr.get('soc2_status','pending')).upper()}<br/>"
+            comp_text += f"ISO27: {str(cr.get('iso27001_status','pending')).upper()}<br/>"
+            comp_text += f"GDPR: {str(cr.get('gdpr_status','pending')).upper()}"
+
+            action_row = Table([
+                [Paragraph(steps_text, s("body_small")), Paragraph(comp_text, s("body_small"))]
+            ], colWidths=col_ws)
+            action_row.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f0f0ee")),
+                ("BOX", (0, 0), (-1, -1), 0.5, RULE_GRAY),
+            ]))
+            story.append(action_row)
 
         story.append(self._spacer(8))
         return story
@@ -867,9 +953,15 @@ class SecurePathReport:
 
     # ── GENERATE ──
 
-    def generate(self) -> bytes:
-        """Build and return the PDF as bytes."""
-        buf = io.BytesIO()
+    def generate(self, scan: dict, findings: list) -> str:
+        """Build and save the PDF, return the path."""
+        self.scan = scan
+        self.findings = findings
+        
+        from db import REPORTS_DIR
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        scan_id = str(scan.get("id", "unknown"))
+        out_path = os.path.abspath(os.path.join(REPORTS_DIR, f"securepath_{scan_id[:8]}.pdf"))
 
         report_meta = {
             "repo_name": self.scan.get("repo_name") or self.scan.get("repo_url") or "",
@@ -877,16 +969,13 @@ class SecurePathReport:
         }
 
         doc = SimpleDocTemplate(
-            buf,
+            out_path,
             pagesize=A4,
             leftMargin=MARGIN_L,
             rightMargin=MARGIN_R,
-            topMargin=MARGIN_T + 14 * mm,   # extra for header band
-            bottomMargin=MARGIN_B + 10 * mm, # extra for footer
-            title=f"SecurePath Security Report — {report_meta['repo_name']}",
-            author="SecurePath",
-            subject="Security Assessment Report",
-            creator="SecurePath v1.0",
+            topMargin=MARGIN_T + 14 * mm,
+            bottomMargin=MARGIN_B + 10 * mm,
+            title=f"SecurePath Security Report",
         )
 
         story = []
@@ -894,7 +983,6 @@ class SecurePathReport:
         story += self._toc()
         story += self._executive_summary()
         story += self._scan_overview()
-        # Severity distribution is embedded in exec summary; skip standalone page
         story += self._compliance_section()
         story += self._findings_section()
         story += self._roadmap_section()
@@ -902,9 +990,7 @@ class SecurePathReport:
 
         CanvasClass = _build_header_footer_canvas(report_meta)
         doc.build(story, canvasmaker=CanvasClass)
-
-        buf.seek(0)
-        return buf.read()
+        return out_path
 
 
 # ─── CONVENIENCE FUNCTION ─────────────────────────────────────────────────────
