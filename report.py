@@ -1,3 +1,4 @@
+import json as _json
 import os
 from datetime import datetime
 from typing import Any
@@ -15,18 +16,23 @@ from db import REPORTS_DIR  # resolves to /data/reports in prod, ./reports local
 
 
 class AuditReportGenerator:
-    DARK_BG = colors.HexColor("#0d1117")
-    ACCENT_RED = colors.HexColor("#e94560")
-    ACCENT_BLUE = colors.HexColor("#58a6ff")
-    CRITICAL = colors.HexColor("#ff2d55")
-    HIGH = colors.HexColor("#ff9f0a")
-    MEDIUM = colors.HexColor("#ffd60a")
-    LOW = colors.HexColor("#34c759")
-    LIGHT_GRAY = colors.HexColor("#f6f8fa")
-    MID_GRAY = colors.HexColor("#8b949e")
-    BORDER = colors.HexColor("#21262d")
+    # Monochrome black & white palette
+    DARK_BG = colors.HexColor("#111111")
+    ACCENT_RED = colors.HexColor("#222222")
+    ACCENT_BLUE = colors.HexColor("#333333")
+    CRITICAL = colors.HexColor("#000000")
+    HIGH = colors.HexColor("#333333")
+    MEDIUM = colors.HexColor("#666666")
+    LOW = colors.HexColor("#999999")
+    LIGHT_GRAY = colors.HexColor("#f5f5f5")
+    MID_GRAY = colors.HexColor("#888888")
+    BORDER = colors.HexColor("#cccccc")
     WHITE = colors.HexColor("#ffffff")
-    DARK_TEXT = colors.HexColor("#0d1117")
+    DARK_TEXT = colors.HexColor("#111111")
+    # Semantic colors kept for badges only
+    BADGE_RED = colors.HexColor("#dc2626")
+    BADGE_AMBER = colors.HexColor("#d97706")
+    BADGE_GREEN = colors.HexColor("#16a34a")
 
     PAGE_W, PAGE_H = A4
     MARGIN_X = 48
@@ -87,6 +93,8 @@ class AuditReportGenerator:
         for finding in high_crit:
             self.finding_counter += 1
             self._draw_finding_page(c, finding, self.finding_counter)
+            c.showPage()
+            self._draw_finding_impact_page(c, finding, self.finding_counter)
             c.showPage()
 
         self._draw_additional_findings_table(c, findings, page_offset=0)
@@ -650,6 +658,194 @@ class AuditReportGenerator:
         )
 
         self._draw_footer(c, 2 + idx, dark=False)
+
+    def _parse_json_field(self, finding: dict, field: str) -> dict:
+        """Safely parse a JSON text column or return dict directly."""
+        raw = finding.get(field)
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = _json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        return {}
+
+    def _draw_finding_impact_page(self, c: canvas.Canvas, finding: dict, idx: int) -> None:
+        """Second page per finding: Business Impact + Assets Exposed."""
+        c.setFillColor(self.WHITE)
+        c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
+
+        title = self._safe(finding.get("raw_title"), 74, "Untitled finding")
+        c.setFillColor(self.DARK_BG)
+        c.rect(0, self.PAGE_H - 40, self.PAGE_W, 40, fill=1, stroke=0)
+        c.setFillColor(self.WHITE)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(self.MARGIN_X, self.PAGE_H - 28, f"{idx:02d}  {title[:74]}  —  IMPACT & EXPOSURE")
+
+        full_w = self.PAGE_W - (2 * self.MARGIN_X)
+        y = self.PAGE_H - 68
+
+        # ── BUSINESS IMPACT SECTION ──
+        bi = self._parse_json_field(finding, "business_impact_json")
+        if not bi:
+            bi = self._parse_json_field(finding, "business_impact")
+        if not bi:
+            bi = finding.get("business_impact", {}) or {}
+
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(self.MARGIN_X, y, "BUSINESS IMPACT")
+        y -= 20
+
+        # Financial Exposure — amber highlight box
+        fin_exp = str(bi.get("financial_exposure", "Financial exposure data unavailable."))
+        c.setFillColor(colors.HexColor("#fef3c7"))
+        c.roundRect(self.MARGIN_X, y - 52, full_w, 50, 5, fill=1, stroke=0)
+        c.setStrokeColor(self.BADGE_AMBER)
+        c.setLineWidth(1.5)
+        c.roundRect(self.MARGIN_X, y - 52, full_w, 50, 5, fill=0, stroke=1)
+        c.setFillColor(colors.HexColor("#92400e"))
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(self.MARGIN_X + 10, y - 10, "FINANCIAL EXPOSURE")
+        self._draw_wrapped_text(c, fin_exp, self.MARGIN_X + 10, y - 22, full_w - 20, "Helvetica", 8.5, 11, self.DARK_TEXT)
+        y -= 64
+
+        # Compliance Violations table
+        violations = bi.get("compliance_violations", [])
+        if isinstance(violations, list) and violations:
+            c.setFillColor(self.DARK_TEXT)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(self.MARGIN_X, y, "COMPLIANCE VIOLATIONS")
+            y -= 6
+            table_data = [["Framework", "Control", "Meaning"]]
+            for v in violations[:6]:
+                if isinstance(v, dict):
+                    table_data.append([
+                        str(v.get("framework", ""))[:16],
+                        str(v.get("control", ""))[:14],
+                        str(v.get("meaning", ""))[:90],
+                    ])
+            col_widths = [70, 60, full_w - 130]
+            tbl = Table(table_data, colWidths=col_widths, rowHeights=16)
+            tbl.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                ("TEXTCOLOR", (0, 0), (-1, 0), self.WHITE),
+                ("BACKGROUND", (0, 0), (-1, 0), self.DARK_BG),
+                ("GRID", (0, 0), (-1, -1), 0.3, self.BORDER),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 1), (-1, -1), self.LIGHT_GRAY),
+            ]))
+            tw, th = tbl.wrapOn(c, full_w, 200)
+            tbl.drawOn(c, self.MARGIN_X, y - th)
+            y -= (th + 14)
+
+        # Exploitation Likelihood badge + reason
+        likelihood = str(bi.get("exploitation_likelihood", "medium")).lower().strip()
+        lk_colors = {"high": self.BADGE_RED, "medium": self.BADGE_AMBER, "low": self.BADGE_GREEN}
+        lk_fg = self.WHITE if likelihood in {"high", "low"} else self.DARK_TEXT
+        lk_bg = lk_colors.get(likelihood, self.MID_GRAY)
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(self.MARGIN_X, y, "EXPLOITATION LIKELIHOOD")
+        self._draw_badge(c, self.MARGIN_X + 140, y - 2, likelihood.upper(), lk_bg, lk_fg)
+        y -= 16
+        reason = str(bi.get("likelihood_reason", ""))
+        if reason:
+            self._draw_wrapped_text(c, reason, self.MARGIN_X, y, full_w, "Helvetica-Oblique", 8, 10, colors.HexColor("#555555"))
+            y -= 18
+
+        y -= 18
+
+        # ── ASSETS EXPOSED SECTION ──
+        ae = self._parse_json_field(finding, "assets_exposed_json")
+        if not ae:
+            ae = self._parse_json_field(finding, "assets_exposed")
+        if not ae:
+            ae = finding.get("assets_exposed", {}) or {}
+
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(self.MARGIN_X, y, "ASSETS EXPOSED")
+        y -= 20
+
+        # Data Types at Risk — tags
+        data_types = ae.get("data_types", [])
+        if isinstance(data_types, list) and data_types:
+            c.setFillColor(self.DARK_TEXT)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(self.MARGIN_X, y, "DATA TYPES AT RISK")
+            y -= 16
+            tx = self.MARGIN_X
+            for dt in data_types[:8]:
+                label = str(dt).strip()[:24]
+                tw = pdfmetrics.stringWidth(label, "Helvetica-Bold", 7.5) + 14
+                c.setFillColor(colors.HexColor("#e5e5e5"))
+                c.roundRect(tx, y, tw, 14, 4, fill=1, stroke=0)
+                c.setStrokeColor(self.DARK_TEXT)
+                c.setLineWidth(0.5)
+                c.roundRect(tx, y, tw, 14, 4, fill=0, stroke=1)
+                c.setFillColor(self.DARK_TEXT)
+                c.setFont("Helvetica-Bold", 7.5)
+                c.drawCentredString(tx + tw / 2, y + 4, label)
+                tx += tw + 6
+                if tx > self.PAGE_W - self.MARGIN_X - 60:
+                    tx = self.MARGIN_X
+                    y -= 18
+            y -= 22
+
+        # Systems Affected — list
+        systems = ae.get("systems_affected", [])
+        if isinstance(systems, list) and systems:
+            c.setFillColor(self.DARK_TEXT)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(self.MARGIN_X, y, "SYSTEMS AFFECTED")
+            y -= 14
+            for sys_name in systems[:6]:
+                c.setFillColor(self.DARK_TEXT)
+                c.setFont("Helvetica", 8.5)
+                c.drawString(self.MARGIN_X + 8, y, f"•  {str(sys_name).strip()[:60]}")
+                y -= 12
+            y -= 8
+
+        # Exposure Scope badge
+        scope = str(ae.get("exposure_scope", "internal_only")).lower().strip()
+        scope_colors = {
+            "external_facing": self.BADGE_RED,
+            "third_party_accessible": self.BADGE_AMBER,
+            "internal_only": self.BADGE_GREEN,
+        }
+        scope_fg = self.WHITE
+        scope_bg = scope_colors.get(scope, self.MID_GRAY)
+        scope_label = scope.replace("_", " ").upper()
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(self.MARGIN_X, y, "EXPOSURE SCOPE")
+        self._draw_badge(c, self.MARGIN_X + 100, y - 2, scope_label, scope_bg, scope_fg)
+        y -= 22
+
+        # Exposure Explanation
+        explanation = str(ae.get("exposure_explanation", ""))
+        if explanation:
+            c.setFillColor(self.DARK_TEXT)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(self.MARGIN_X, y, "EXPOSURE EXPLANATION")
+            y -= 14
+            self._draw_wrapped_text(c, explanation, self.MARGIN_X, y, full_w, "Helvetica", 9, 11.5, self.DARK_TEXT)
+            y -= 20
+
+        # Estimated Records at Risk
+        records = str(ae.get("estimated_records_at_risk", "unknown"))
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(self.MARGIN_X, y, "ESTIMATED RECORDS AT RISK")
+        c.setFont("Helvetica", 9)
+        c.drawString(self.MARGIN_X + 160, y, records[:60])
+
+        self._draw_footer(c, 3 + (idx * 2), dark=False)
 
     def _draw_additional_findings_table(self, c: canvas.Canvas, findings: list[dict], page_offset: int = 0) -> None:
         # Include medium, low, and info — not just medium/low

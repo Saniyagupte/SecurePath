@@ -317,6 +317,11 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             if not fid:
                 continue
             remediation = ef.get("remediation", [])
+            # Serialize new impact/exposure fields for DB storage
+            bi = ef.get("business_impact")
+            ae = ef.get("assets_exposed")
+            bi_json = json.dumps(bi) if isinstance(bi, dict) else (bi if isinstance(bi, str) else None)
+            ae_json = json.dumps(ae) if isinstance(ae, dict) else (ae if isinstance(ae, str) else None)
             update_finding(
                 str(fid),
                 plain_english=ef.get("plain_english"),
@@ -329,6 +334,8 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
                 confidence_score=ef.get("confidence_score"),
                 false_positive_risk=ef.get("false_positive_risk"),
                 false_positive_reason=ef.get("false_positive_reason"),
+                business_impact_json=bi_json,
+                assets_exposed_json=ae_json,
                 enrichment_status="failed"
                 if ef.get("enrichment_failed")
                 else "complete",

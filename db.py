@@ -179,6 +179,7 @@ FINDING_FIELDS = {
     "business_risk", "exploit_scenario", "remediation_json",
     "soc2_controls", "confidence_score", "false_positive_risk",
     "false_positive_reason", "enrichment_status", "created_at",
+    "business_impact_json", "assets_exposed_json",
 }
 
 
@@ -249,6 +250,12 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity)"
         )
+        # Safely add new columns for Business Impact and Asset Exposure features
+        for col_name in ("business_impact_json", "assets_exposed_json"):
+            try:
+                conn.execute(f"ALTER TABLE findings ADD COLUMN {col_name} TEXT")
+            except Exception:
+                pass  # Column already exists
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scan_reports (
@@ -345,6 +352,23 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
     finding_id = finding_dict.get("id") or str(uuid.uuid4())
     created_at = finding_dict.get("created_at") or _utc_now_iso()
 
+    # Serialize business_impact and assets_exposed dicts to JSON strings for storage
+    bi_raw = finding_dict.get("business_impact") or finding_dict.get("business_impact_json")
+    if isinstance(bi_raw, dict):
+        bi_json = json.dumps(bi_raw)
+    elif isinstance(bi_raw, str):
+        bi_json = bi_raw
+    else:
+        bi_json = None
+
+    ae_raw = finding_dict.get("assets_exposed") or finding_dict.get("assets_exposed_json")
+    if isinstance(ae_raw, dict):
+        ae_json = json.dumps(ae_raw)
+    elif isinstance(ae_raw, str):
+        ae_json = ae_raw
+    else:
+        ae_json = None
+
     values = {
         "id":                   finding_id,
         "scan_id":              scan_id,
@@ -370,6 +394,8 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
         "false_positive_reason":finding_dict.get("false_positive_reason"),
         "enrichment_status":    finding_dict.get("enrichment_status", "pending"),
         "created_at":           created_at,
+        "business_impact_json": bi_json,
+        "assets_exposed_json":  ae_json,
     }
 
     with _get_conn() as conn:
@@ -381,14 +407,16 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
               owasp_category, npm_package, plain_english, business_risk,
               exploit_scenario, remediation_json, soc2_controls,
               confidence_score, false_positive_risk, false_positive_reason,
-              enrichment_status, created_at
+              enrichment_status, created_at,
+              business_impact_json, assets_exposed_json
             ) VALUES (
               :id, :scan_id, :pass_name, :file_path, :line_start, :line_end,
               :severity, :category, :raw_title, :code_snippet, :cve_id, :cwe_id,
               :owasp_category, :npm_package, :plain_english, :business_risk,
               :exploit_scenario, :remediation_json, :soc2_controls,
               :confidence_score, :false_positive_risk, :false_positive_reason,
-              :enrichment_status, :created_at
+              :enrichment_status, :created_at,
+              :business_impact_json, :assets_exposed_json
             )
             """,
             values,

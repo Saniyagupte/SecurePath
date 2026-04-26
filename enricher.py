@@ -191,7 +191,31 @@ Use this exact schema:
       "description": "Architectural hardening with specific packages if needed.",
       "tradeoff": "Long-term posture gain and maintenance cost."
     }}
-  ]
+  ],
+  "business_impact": {{
+    "financial_exposure": "Realistic cost if exploited - reference actual figures like average breach costs $4.4M, GDPR fines up to 4% annual revenue. Be specific to this finding type.",
+    "compliance_violations": [
+      {{
+        "framework": "SOC2",
+        "control": "CC6.1",
+        "meaning": "What this control requires and how this finding violates it"
+      }},
+      {{
+        "framework": "ISO 27001",
+        "control": "A.9.4.1",
+        "meaning": "What this control requires and how this finding violates it"
+      }}
+    ],
+    "exploitation_likelihood": "low/medium/high",
+    "likelihood_reason": "One sentence why, based on the specific code shown"
+  }},
+  "assets_exposed": {{
+    "data_types": ["specific data types at risk: PII, credentials, financial data, API keys, session tokens, etc"],
+    "systems_affected": ["specific systems or services at risk based on file path and code context"],
+    "exposure_scope": "internal_only OR external_facing OR third_party_accessible",
+    "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
+    "estimated_records_at_risk": "rough estimate or unknown if cannot be determined from code alone"
+  }}
 }}"""
 
         last_error: Exception | None = None
@@ -200,7 +224,7 @@ Use this exact schema:
                 payload = {
                     "model": model,
                     "temperature": 0.2,
-                    "max_tokens": 900,
+                    "max_tokens": 2400,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
@@ -298,6 +322,16 @@ Use this exact schema:
         if not isinstance(remediation, list):
             remediation = []
 
+        # Extract business_impact from LLM response, fall back to template
+        business_impact = enrichment.get("business_impact")
+        if not isinstance(business_impact, dict) or not business_impact:
+            business_impact = base.get("business_impact", {})
+
+        # Extract assets_exposed from LLM response, fall back to template
+        assets_exposed = enrichment.get("assets_exposed")
+        if not isinstance(assets_exposed, dict) or not assets_exposed:
+            assets_exposed = base.get("assets_exposed", {})
+
         merged.update(
             {
                 "plain_english": str(enrichment.get("plain_english") or base.get("plain_english"))[:800],
@@ -310,6 +344,8 @@ Use this exact schema:
                 "confidence_score": base.get("confidence_score", 7),
                 "false_positive_risk": base.get("false_positive_risk", "medium"),
                 "false_positive_reason": str(base.get("false_positive_reason"))[:800],
+                "business_impact": business_impact,
+                "assets_exposed": assets_exposed,
                 "enrichment_failed": enrichment_failed,
                 "enrichment_status": "failed" if enrichment_failed else "complete",
             }
@@ -359,6 +395,120 @@ Use this exact schema:
         if category == "secrets":
             base_confidence = min(base_confidence, 6)
 
+        # Build default business_impact based on category/severity
+        bi_financial_templates = {
+            "injection": "SQL injection breaches average $4.4M in remediation costs (IBM 2023). GDPR fines up to 4% annual revenue if PII is exfiltrated. Regulatory notification costs add $150-$200 per affected record.",
+            "auth": "Account takeover incidents cost $4.2M on average. Credential stuffing losses average $6M annually per enterprise. SOC2 audit failure can delay revenue-generating contracts.",
+            "secrets": "Exposed credentials lead to unauthorized access costing $4.4M average per breach. Key rotation and incident response costs range $50K-$500K depending on exposure window.",
+            "config": "Misconfiguration-related breaches cost $3.9M on average. Cloud misconfigurations account for 15% of initial attack vectors.",
+            "deps": "Vulnerable dependency exploitation costs average $4.1M per incident. Supply chain attacks increased 742% in recent years.",
+            "xss": "XSS-driven session hijacking can lead to full account takeover. Average cost of web application attacks is $3.8M per incident.",
+            "crypto": "Cryptographic failures expose regulated data. GDPR fines up to €20M or 4% global revenue, whichever is higher.",
+            "misc": "Security control weaknesses increase overall breach probability. Average breach cost is $4.4M with 277-day mean detection time.",
+        }
+        bi_compliance_templates = {
+            "injection": [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Requires logical access controls to prevent unauthorized data access. SQL injection bypasses these controls entirely."},
+                {"framework": "ISO 27001", "control": "A.14.2.5", "meaning": "Requires secure system engineering principles. Unsanitized input violates secure coding requirements."},
+            ],
+            "auth": [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Requires authentication controls to restrict access. Weak auth allows unauthorized access to protected resources."},
+                {"framework": "ISO 27001", "control": "A.9.4.1", "meaning": "Requires information access restriction. Broken authentication fails to enforce access boundaries."},
+            ],
+            "secrets": [
+                {"framework": "SOC2", "control": "CC6.7", "meaning": "Requires restriction of data in transit/at rest. Hardcoded secrets expose credentials in plaintext."},
+                {"framework": "ISO 27001", "control": "A.9.2.4", "meaning": "Requires management of secret authentication information. Committed secrets violate credential lifecycle controls."},
+            ],
+            "config": [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Requires logical access security. Misconfiguration weakens baseline access control enforcement."},
+                {"framework": "ISO 27001", "control": "A.12.6.1", "meaning": "Requires management of technical vulnerabilities. Insecure defaults leave known weaknesses unaddressed."},
+            ],
+            "deps": [
+                {"framework": "SOC2", "control": "CC7.1", "meaning": "Requires monitoring for vulnerabilities. Known CVEs in dependencies represent unpatched attack surface."},
+                {"framework": "ISO 27001", "control": "A.12.6.1", "meaning": "Requires timely patching of technical vulnerabilities. Outdated dependencies violate patch management controls."},
+            ],
+            "xss": [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Requires input validation and output encoding. XSS allows execution of unauthorized code in user context."},
+                {"framework": "ISO 27001", "control": "A.14.2.5", "meaning": "Requires secure development principles. Missing output encoding violates secure coding standards."},
+            ],
+            "crypto": [
+                {"framework": "SOC2", "control": "CC6.7", "meaning": "Requires encryption of data in transit and at rest. Weak crypto fails to protect data confidentiality."},
+                {"framework": "ISO 27001", "control": "A.10.1.1", "meaning": "Requires cryptographic controls policy. Weak algorithms or key management violate crypto requirements."},
+            ],
+            "misc": [
+                {"framework": "SOC2", "control": "CC6.1", "meaning": "Requires logical access controls. This weakness may reduce overall access control effectiveness."},
+                {"framework": "ISO 27001", "control": "A.12.6.1", "meaning": "Requires technical vulnerability management. Unaddressed findings represent unmanaged risk."},
+            ],
+        }
+        bi_likelihood = "high" if severity in {"critical"} else ("medium" if severity in {"high"} else "low")
+        bi_likelihood_reason_templates = {
+            "injection": "Injection endpoints are actively targeted by automated scanners and require no authentication to exploit.",
+            "auth": "Authentication bypasses are commonly exploited via credential stuffing and session manipulation.",
+            "secrets": "Committed secrets are discoverable by automated GitHub/GitLab scanning bots within minutes of push.",
+            "config": "Misconfigured services are indexed by Shodan and similar reconnaissance tools.",
+            "deps": "Public CVEs have known exploit code and are targeted by automated vulnerability scanners.",
+            "xss": "XSS payloads can be delivered via social engineering or injected into stored content.",
+            "crypto": "Weak cryptography requires targeted effort but yields high-value data when broken.",
+            "misc": "Exploitation depends on attacker access level and finding specifics.",
+        }
+
+        business_impact = {
+            "financial_exposure": bi_financial_templates.get(category, bi_financial_templates["misc"]),
+            "compliance_violations": bi_compliance_templates.get(category, bi_compliance_templates["misc"]),
+            "exploitation_likelihood": bi_likelihood,
+            "likelihood_reason": bi_likelihood_reason_templates.get(category, bi_likelihood_reason_templates["misc"]),
+        }
+
+        # Build default assets_exposed based on category
+        ae_data_types_templates = {
+            "injection": ["PII", "credentials", "financial data", "session tokens"],
+            "auth": ["session tokens", "user credentials", "PII"],
+            "secrets": ["API keys", "credentials", "private keys", "database connection strings"],
+            "config": ["system configuration", "internal endpoints", "debug information"],
+            "deps": ["application data", "PII", "credentials"],
+            "xss": ["session tokens", "cookies", "PII", "DOM content"],
+            "crypto": ["encrypted data", "PII", "financial data"],
+            "misc": ["application data"],
+        }
+        ae_systems_templates = {
+            "injection": ["database server", "backend API"],
+            "auth": ["authentication service", "user management"],
+            "secrets": ["external services", "cloud infrastructure", "databases"],
+            "config": ["web server", "application runtime"],
+            "deps": ["application runtime", "downstream services"],
+            "xss": ["client browser", "frontend application"],
+            "crypto": ["data storage", "communication channels"],
+            "misc": ["application stack"],
+        }
+        ae_scope_map = {
+            "injection": "external_facing",
+            "auth": "external_facing",
+            "secrets": "third_party_accessible",
+            "config": "external_facing",
+            "deps": "external_facing",
+            "xss": "external_facing",
+            "crypto": "internal_only",
+            "misc": "internal_only",
+        }
+        ae_explanation_templates = {
+            "injection": f"An attacker exploiting `{file_path}` can read or modify database records, potentially extracting all stored user data.",
+            "auth": f"An attacker can bypass authentication in `{file_path}` to impersonate users and access their protected resources.",
+            "secrets": f"Exposed credentials in `{file_path}` grant direct access to connected systems and stored data.",
+            "config": f"Misconfiguration in `{file_path}` exposes internal system details that aid further attacks.",
+            "deps": f"Vulnerable dependency used in `{file_path}` can be exploited via known public attack vectors.",
+            "xss": f"XSS in `{file_path}` allows an attacker to steal user sessions and perform actions as the victim.",
+            "crypto": f"Weak cryptography in `{file_path}` allows an attacker to decrypt or forge protected data.",
+            "misc": f"This weakness in `{file_path}` may allow unauthorized access depending on deployment context.",
+        }
+
+        assets_exposed = {
+            "data_types": ae_data_types_templates.get(category, ae_data_types_templates["misc"]),
+            "systems_affected": ae_systems_templates.get(category, ae_systems_templates["misc"]),
+            "exposure_scope": ae_scope_map.get(category, "internal_only"),
+            "exposure_explanation": ae_explanation_templates.get(category, ae_explanation_templates["misc"]),
+            "estimated_records_at_risk": "unknown",
+        }
+
         enriched = dict(mapped)
         enriched.update(
             {
@@ -372,6 +522,8 @@ Use this exact schema:
                 "false_positive_reason": (
                     f"The finding is pattern-based (CWE {cwe}, {owasp}); manual validation should confirm runtime reachability and exploitability."
                 )[:800],
+                "business_impact": business_impact,
+                "assets_exposed": assets_exposed,
                 "enrichment_failed": False,
                 "enrichment_status": "complete",
             }
