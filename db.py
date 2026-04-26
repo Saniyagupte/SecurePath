@@ -250,12 +250,23 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity)"
         )
-        # Safely add new columns for Business Impact and Asset Exposure features
+        # Safely add new columns for Business Impact and Asset Exposure features.
+        # Each ALTER runs in its own connection so a failure (column already exists)
+        # does not abort the main transaction — critical for PostgreSQL.
         for col_name in ("business_impact_json", "assets_exposed_json"):
             try:
-                conn.execute(f"ALTER TABLE findings ADD COLUMN {col_name} TEXT")
+                with _get_conn() as alt_conn:
+                    if _USE_POSTGRES:
+                        alt_conn.execute(
+                            f"ALTER TABLE findings ADD COLUMN IF NOT EXISTS {col_name} TEXT"
+                        )
+                    else:
+                        alt_conn.execute(
+                            f"ALTER TABLE findings ADD COLUMN {col_name} TEXT"
+                        )
+                    alt_conn.commit()
             except Exception:
-                pass  # Column already exists
+                pass  # Column already exists (SQLite path)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scan_reports (
