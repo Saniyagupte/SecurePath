@@ -34,11 +34,16 @@ from scanner import SecurityScanner
 app = Flask(__name__)
 load_dotenv()
 
-# Ensure DB schema is ready when gunicorn imports this module
-try:
-    init_db()
-except Exception as _e:
-    print(f"[SecurePath] init_db at import: {_e}")
+# Run DB init in background so gunicorn binds to the port immediately.
+# If it fails, the first request that hits the DB will surface the error.
+def _background_init_db():
+    try:
+        init_db()
+        print("[SecurePath] DB initialized OK")
+    except Exception as _e:
+        print(f"[SecurePath] init_db background: {_e}")
+
+threading.Thread(target=_background_init_db, daemon=True).start()
 
 # Admin access — set ADMIN_PASSWORD env var on Railway/Render, default is intentionally weak
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")

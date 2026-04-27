@@ -37,7 +37,6 @@ ENV DATA_DIR=/data
 # PORT is injected automatically by Railway and Render
 EXPOSE 8000
 
-# Use gunicorn with 1 worker and threads to aggressively minimize RAM for the 500MB free tier.
-# init_db() runs best-effort before gunicorn — if it fails, gunicorn still starts so
-# Render detects the port. The app will retry init_db on first request anyway.
-CMD ["sh", "-c", "python -c 'from db import init_db; init_db()' || echo '[SecurePath] init_db warning — will retry at runtime'; exec gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 300 --access-logfile - app:app"]
+# init_db() runs best-effort with a 15s timeout before gunicorn.
+# The app also runs init_db in a background thread at import time as a safety net.
+CMD ["sh", "-c", "timeout 15 python -c 'from db import init_db; init_db()' || echo '[SecurePath] init_db skipped'; exec gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 4 --timeout 300 --access-logfile - app:app"]
