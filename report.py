@@ -163,7 +163,7 @@ class AuditReportGenerator:
         c.setFillColor(self.DARK_BG)
         c.rect(0, 0, self.PAGE_W, self.PAGE_H, fill=1, stroke=0)
 
-        c.setFillColor(self.ACCENT_RED)
+        c.setFillColor(self.WHITE)
         c.setFont("Helvetica-Bold", 36)
         c.drawString(self.MARGIN_X, self.PAGE_H - 85, "SECUREPATH")
 
@@ -352,15 +352,22 @@ class AuditReportGenerator:
             c.setFillColor(self.WHITE)
             c.setFont("Helvetica-Bold", 7)
             c.drawCentredString(right_x + 39, yy - 1, sev)
+            
             c.setFillColor(self.DARK_TEXT)
             c.setFont("Helvetica-Bold", 8.5)
-            c.drawString(right_x + 72, yy, title)
+            # Shorten title to avoid right-overflow
+            short_title = title[:32] + "..." if len(title) > 32 else title
+            c.drawString(right_x + 72, yy, short_title)
+            
             c.setFont(self.mono, 7.2)
             c.setFillColor(colors.HexColor("#4b5563"))
-            c.drawString(right_x + 72, yy - 11, f"File: {path} (line {line})")
+            # Vertical alignment: shift file path down
+            c.drawString(right_x + 72, yy - 11, f"File: {path[:22]}... (line {line})")
+            
+            # Use wrapped text for impact to prevent horizontal overflow
             c.setFont("Helvetica", 7.5)
-            c.drawString(right_x + 72, yy - 21, f"Impact: {impact}")
-            yy -= 44
+            self._draw_wrapped_text(c, f"Impact: {impact}", right_x + 72, yy - 21, right_w - 76, "Helvetica", 7.5, 9, self.DARK_TEXT)
+            yy -= 50
 
         control_set: set[str] = set()
         for f in findings:
