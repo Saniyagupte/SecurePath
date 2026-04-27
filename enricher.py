@@ -129,26 +129,36 @@ class EXAIEnricher:
                 
                 done += 1
                 pct = int((done / total) * 100)
-                self.progress_callback(pct, f"Enriching finding {done}/{total}...")
+                print(f"[Enricher] Progress: {pct}% ({done}/{total})")
+                self.progress_callback(pct, f"Enriching finding {done}/{total} ({pct}%)...")
 
         enrich_time = time.time() - start_time
         print(f"[Enricher] Enrichment completed in {enrich_time:.2f}s")
-        self.progress_callback(100, "AI enrichment complete.")
+        self.progress_callback(100, "AI enrichment complete (100%).")
         return enriched
 
     def enrich_finding(self, finding: dict) -> dict:
+        import time
+        start_t = time.time()
+        title = finding.get('raw_title', 'unknown')[:30]
+        print(f"[Enricher] Starting LLM call for finding: {title}")
         delays = [1, 2] # Reduced delays to stay within 60s
         last_error: Exception | None = None
 
         for attempt in range(1, 3): # Reduced to 2 attempts max
             try:
                 payload = self._call_llm(finding)
+                duration = time.time() - start_t
+                print(f"[Enricher] LLM call succeeded for '{title}' in {duration:.2f}s (attempt {attempt})")
                 return self._merge_enrichment(finding, payload, enrichment_failed=False)
             except Exception as exc:
                 last_error = exc
+                duration = time.time() - start_t
+                print(f"[Enricher] LLM attempt {attempt} failed for '{title}' after {duration:.2f}s: {exc}")
                 if attempt < 2:
                     time.sleep(delays[attempt - 1])
 
+        print(f"[Enricher] Giving up on LLM for '{title}', falling back to template.")
         fallback = self.template_enrichment(finding)
         fallback["enrichment_failed"] = True
         # Don't append error message to false_positive_reason - keep that field for actual security findings
