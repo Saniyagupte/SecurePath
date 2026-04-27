@@ -24,11 +24,18 @@ _IS_VERCEL = os.getenv("VERCEL") == "1"
 _DATA_DIR = os.getenv("DATA_DIR", "")
 
 # Vercel has a read-only filesystem except for /tmp
-if _IS_VERCEL and not _DATA_DIR:
+if _IS_VERCEL:
+    # Force use of /tmp on Vercel to avoid read-only filesystem errors
     _DATA_DIR = "/tmp"
+else:
+    _DATA_DIR = os.getenv("DATA_DIR", "")
 
 if _DATA_DIR:
-    os.makedirs(_DATA_DIR, exist_ok=True)
+    try:
+        os.makedirs(_DATA_DIR, exist_ok=True)
+    except OSError:
+        if not _IS_VERCEL:
+            raise
 
 # Fixed paths for local vs ephemeral
 DB_PATH     = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else os.path.abspath("securepath.db")
