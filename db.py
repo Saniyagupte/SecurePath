@@ -30,8 +30,9 @@ if _IS_VERCEL and not _DATA_DIR:
 if _DATA_DIR:
     os.makedirs(_DATA_DIR, exist_ok=True)
 
-DB_PATH     = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else "securepath.db"
-REPORTS_DIR = os.path.join(_DATA_DIR, "reports") if _DATA_DIR else "reports"
+# Fixed paths for local vs ephemeral
+DB_PATH     = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else os.path.abspath("securepath.db")
+REPORTS_DIR = os.path.join(_DATA_DIR, "reports") if _DATA_DIR else os.path.abspath("reports")
 
 # Ensure reports directory exists, but don't crash if it's read-only
 try:
