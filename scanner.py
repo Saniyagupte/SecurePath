@@ -211,35 +211,52 @@ class SecurityScanner:
         self.progress_callback(p, step)
 
     def run(self) -> list[dict[str, Any]]:
+        import time
+        self.start_time = time.time()
+        print(f"[Scanner] Starting scan for {self.scan_id} at {self.start_time}")
         all_findings: list[dict[str, Any]] = []
         cloned_path: Path | None = None
         try:
             self._progress(2, "Cloning repository...")
             cloned_path = Path(self.clone_repo(self.repo_url))
             self.repo_path = cloned_path
+            clone_time = time.time()
+            print(f"[Scanner] Repository cloned in {clone_time - self.start_time:.2f}s. Starting SAST analysis...")
             self._progress(15, "Repository cloned. Starting SAST analysis...")
 
             pass1 = self._run_semgrep_pass()
             all_findings.extend(pass1)
+            sast_time = time.time()
+            print(f"[Scanner] SAST pass took {sast_time - clone_time:.2f}s. Found {len(pass1)} items. Running dependency audit...")
             self._progress(35, "SAST completed. Running dependency audit...")
 
             pass2 = self._run_dependency_pass()
             all_findings.extend(pass2)
+            deps_time = time.time()
+            print(f"[Scanner] Dependency pass took {deps_time - sast_time:.2f}s. Found {len(pass2)} items. Scanning for secrets...")
             self._progress(50, "Dependency audit completed. Scanning for secrets...")
 
             pass3 = self._run_secret_pass()
             all_findings.extend(pass3)
+            sec_time = time.time()
+            print(f"[Scanner] Secret pass took {sec_time - deps_time:.2f}s. Found {len(pass3)} items. Running structural analysis...")
             self._progress(65, "Secret scanning completed. Running structural analysis...")
 
             pass4 = self._run_structural_pass()
             all_findings.extend(pass4)
+            struct_time = time.time()
+            print(f"[Scanner] Structural pass took {struct_time - sec_time:.2f}s. Found {len(pass4)} items. Auditing config files...")
             self._progress(80, "Structural analysis completed. Auditing config files...")
 
             pass5 = self._run_config_pass()
             all_findings.extend(pass5)
+            config_time = time.time()
+            print(f"[Scanner] Config pass took {config_time - struct_time:.2f}s. Found {len(pass5)} items. Deduplicating findings...")
             self._progress(95, "Config audit completed. Deduplicating findings...")
 
             deduped = self._deduplicate_findings(all_findings)
+            total_time = time.time()
+            print(f"[Scanner] Scan complete in {total_time - self.start_time:.2f}s. Total deduped findings: {len(deduped)}")
             self._progress(100, "Scan complete.")
             return deduped
         finally:
@@ -436,13 +453,15 @@ class SecurityScanner:
                     capture_output=True,
                     text=True,
                     check=False,
+                    timeout=20,
                 )
                 output = proc.stdout or "{}"
                 audit_json = json.loads(output)
                 vulns = audit_json.get("vulnerabilities", {}) or {}
                 for package_name, vuln in vulns.items():
                     findings.extend(self._convert_npm_audit_vuln(package_name, vuln))
-            except Exception:
+            except Exception as e:
+                print(f"[Scanner] npm audit failed or timed out: {e}")
                 pass
 
         findings.extend(self._check_manual_bad_versions(pkg_json))
@@ -603,9 +622,14 @@ class SecurityScanner:
         skip_suffixes = (".min.js", ".map")
         false_positive_markers = {"example", "placeholder", "your_key_here", "xxxx"}
 
+        import time
         for root, dirs, files in os.walk(self.repo_path):
+            if hasattr(self, 'start_time') and time.time() - self.start_time > 50: # Leave 10s for other things
+                print("[Scanner] Secret pass global timeout reached")
+                break
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for filename in files:
+                file_start_time = time.time()
                 file_path = Path(root) / filename
                 rel_path = str(file_path.relative_to(self.repo_path).as_posix())
                 if rel_path.endswith(skip_suffixes):
@@ -621,6 +645,9 @@ class SecurityScanner:
                     continue
                 lines = content.splitlines()
                 for idx, line in enumerate(lines, start=1):
+                    if time.time() - file_start_time > 5:
+                        print(f"[Scanner] 5s timeout reached for file {rel_path} in secrets pass")
+                        break
                     line_low = line.lower()
                     if any(marker in line_low for marker in false_positive_markers):
                         continue
@@ -670,9 +697,14 @@ class SecurityScanner:
             return []
         findings: list[dict[str, Any]] = []
 
+        import time
         for root, dirs, files in os.walk(self.repo_path):
+            if hasattr(self, 'start_time') and time.time() - self.start_time > 50:
+                print("[Scanner] Structural pass global timeout reached")
+                break
             dirs[:] = [d for d in dirs if d not in self.skip_dirs_common]
             for filename in files:
+                file_start_time = time.time()
                 if not (filename.endswith(".js") or filename.endswith(".ts")):
                     continue
                 file_path = Path(root) / filename
@@ -687,6 +719,9 @@ class SecurityScanner:
                     continue
                 lines = content.splitlines()
                 for idx, line in enumerate(lines, start=1):
+                    if time.time() - file_start_time > 5:
+                        print(f"[Scanner] 5s timeout reached for file {rel_path} in structural pass")
+                        break
                     for rule in self.structure_patterns:
                         if rule.get("exclude_comment_line") and line.strip().startswith("//"):
                             continue
@@ -796,8 +831,12 @@ class SecurityScanner:
             return []
         findings: list[dict[str, Any]] = []
 
+        import time
         # 5a .env files
         for root, dirs, files in os.walk(self.repo_path):
+            if hasattr(self, 'start_time') and time.time() - self.start_time > 50:
+                print("[Scanner] Config pass 5a global timeout reached")
+                break
             dirs[:] = [d for d in dirs if d not in self.skip_dirs_common]
             for f in files:
                 p = Path(root) / f
@@ -906,8 +945,12 @@ class SecurityScanner:
             r"(?i)(['\"]?secret['\"]?\s*[:=]\s*['\"](changeme|secret|123)['\"])"
         )
         for root, dirs, files in os.walk(self.repo_path):
+            if hasattr(self, 'start_time') and time.time() - self.start_time > 50:
+                print("[Scanner] Config pass 5d global timeout reached")
+                break
             dirs[:] = [d for d in dirs if d not in self.skip_dirs_common]
             for f in files:
+                file_start_time = time.time()
                 if not (f.endswith(".json") or f.endswith(".js")):
                     continue
                 p = Path(root) / f
@@ -919,6 +962,9 @@ class SecurityScanner:
                 except Exception:
                     continue
                 for idx, line in enumerate(lines, start=1):
+                    if time.time() - file_start_time > 5:
+                        print(f"[Scanner] 5s timeout reached for file {rel} in config pass")
+                        break
                     if weak_secret_regex.search(line):
                         findings.append(
                             {

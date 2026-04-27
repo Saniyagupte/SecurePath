@@ -526,6 +526,21 @@ def update_finding(finding_id: str, **kwargs: Any) -> None:
         )
         conn.commit()
 
+def update_findings_batch(updates_list: list[tuple[str, dict[str, Any]]]) -> None:
+    if not updates_list:
+        return
+    with _get_conn() as conn:
+        for finding_id, kwargs in updates_list:
+            updates = {k: v for k, v in kwargs.items() if k in FINDING_FIELDS}
+            if "code_snippet" in updates and updates["code_snippet"] is not None:
+                updates["code_snippet"] = str(updates["code_snippet"])[:300]
+            if not updates:
+                continue
+            placeholders = ", ".join([f"{k} = ?" for k in updates.keys()])
+            values = list(updates.values()) + [finding_id]
+            conn.execute(f"UPDATE findings SET {placeholders} WHERE id = ?", values)
+        conn.commit()
+
 
 def get_findings(scan_id: str) -> "list[dict[str, Any]]":
     with _get_conn() as conn:

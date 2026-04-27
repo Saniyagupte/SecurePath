@@ -21,6 +21,7 @@ from db import (
     mark_pdf_downloaded,
     get_all_sessions,
     update_finding,
+    update_findings_batch,
     update_scan,
     update_session_on_complete,
     save_pdf_to_db,
@@ -323,6 +324,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         enriched_findings = enricher.enrich_all(findings)
 
         # Update findings in DB by finding id
+        batch_updates = []
         for ef in enriched_findings:
             fid = ef.get("id")
             if not fid:
@@ -333,24 +335,24 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             ae = ef.get("assets_exposed")
             bi_json = json.dumps(bi) if isinstance(bi, dict) else (bi if isinstance(bi, str) else None)
             ae_json = json.dumps(ae) if isinstance(ae, dict) else (ae if isinstance(ae, str) else None)
-            update_finding(
-                str(fid),
-                plain_english=ef.get("plain_english"),
-                business_risk=ef.get("business_risk"),
-                exploit_scenario=ef.get("exploit_scenario"),
-                remediation_json=json.dumps(remediation if isinstance(remediation, list) else []),
-                soc2_controls=",".join(ef.get("soc2_controls", []))
+            batch_updates.append((str(fid), {
+                "plain_english": ef.get("plain_english"),
+                "business_risk": ef.get("business_risk"),
+                "exploit_scenario": ef.get("exploit_scenario"),
+                "remediation_json": json.dumps(remediation if isinstance(remediation, list) else []),
+                "soc2_controls": ",".join(ef.get("soc2_controls", []))
                 if isinstance(ef.get("soc2_controls", []), list)
                 else str(ef.get("soc2_controls") or ""),
-                confidence_score=ef.get("confidence_score"),
-                false_positive_risk=ef.get("false_positive_risk"),
-                false_positive_reason=ef.get("false_positive_reason"),
-                business_impact_json=bi_json,
-                assets_exposed_json=ae_json,
-                enrichment_status="failed"
+                "confidence_score": ef.get("confidence_score"),
+                "false_positive_risk": ef.get("false_positive_risk"),
+                "false_positive_reason": ef.get("false_positive_reason"),
+                "business_impact_json": bi_json,
+                "assets_exposed_json": ae_json,
+                "enrichment_status": "failed"
                 if ef.get("enrichment_failed")
                 else "complete",
-            )
+            }))
+        update_findings_batch(batch_updates)
 
         findings_str = json.dumps(enriched_findings, sort_keys=True)
         findings_hash = hashlib.sha256(findings_str.encode("utf-8")).hexdigest()

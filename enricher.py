@@ -92,6 +92,9 @@ class EXAIEnricher:
         self.curated_mode = os.getenv("EXAI_CURATED_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
     def enrich_all(self, findings: list[dict]) -> list[dict]:
+        import time
+        start_time = time.time()
+        print(f"[Enricher] Starting enrichment for {len(findings)} findings...")
         total = len(findings)
         if total == 0:
             self.progress_callback(100, "No findings to enrich.")
@@ -128,20 +131,22 @@ class EXAIEnricher:
                 pct = int((done / total) * 100)
                 self.progress_callback(pct, f"Enriching finding {done}/{total}...")
 
+        enrich_time = time.time() - start_time
+        print(f"[Enricher] Enrichment completed in {enrich_time:.2f}s")
         self.progress_callback(100, "AI enrichment complete.")
         return enriched
 
     def enrich_finding(self, finding: dict) -> dict:
-        delays = [2, 4, 8]
+        delays = [1, 2] # Reduced delays to stay within 60s
         last_error: Exception | None = None
 
-        for attempt in range(1, 4):
+        for attempt in range(1, 3): # Reduced to 2 attempts max
             try:
                 payload = self._call_llm(finding)
                 return self._merge_enrichment(finding, payload, enrichment_failed=False)
             except Exception as exc:
                 last_error = exc
-                if attempt < 3:
+                if attempt < 2:
                     time.sleep(delays[attempt - 1])
 
         fallback = self.template_enrichment(finding)
@@ -257,7 +262,7 @@ Use this exact schema:
                     method="POST",
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=60) as resp:
+                    with urllib.request.urlopen(req, timeout=15) as resp: # Reduced timeout from 60 to 15s to respect 60s total deadline
                         body = resp.read().decode("utf-8")
                     data = json.loads(body)
                     choices = data.get("choices", [])
