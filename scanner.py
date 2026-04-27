@@ -192,7 +192,7 @@ class SecurityScanner:
                 "cookie_check": True,
             },
         ]
-        self.skip_dirs_common = {"node_modules", ".git", "dist", "build", "coverage"}
+        self.skip_dirs_common = {"node_modules", ".git", "dist", "build", "coverage", "vendor", "public", "assets", "static", "docs", "frontend", "client"}
         self.test_dir_markers = ("/test/", "/tests/", "/spec/", "/cypress/", "/__tests__/")
         self.test_file_suffixes = (
             ".spec.ts",
@@ -295,12 +295,18 @@ class SecurityScanner:
                 "--config=p/secrets",
                 "-j", "1",
                 "--max-memory=150",
-                "--max-target-bytes=500000",   # Skip files over 500KB
-                "--timeout=10",                # 10s per file max
+                "--max-target-bytes=150000",   # Skip files over 150KB
+                "--timeout=5",                 # 5s per file max
                 "--exclude-dir=node_modules",
                 "--exclude-dir=dist",
                 "--exclude-dir=build",
                 "--exclude-dir=coverage",
+                "--exclude-dir=vendor",
+                "--exclude-dir=public",
+                "--exclude-dir=assets",
+                "--exclude-dir=static",
+                "--exclude-dir=frontend",
+                "--exclude-dir=client",
                 "--exclude=*.min.js",
                 "--exclude=*.map",
                 "--exclude=*test.js",
@@ -313,7 +319,8 @@ class SecurityScanner:
 
         for cmd in commands:
             try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                # Global timeout of 60 seconds to guarantee we don't hang Render
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
                 parsed = json.loads(proc.stdout or "{}")
                 results = parsed.get("results", [])
                 for r in results:
