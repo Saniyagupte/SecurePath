@@ -585,7 +585,7 @@ Use this exact schema:
             "command_injection": f"`{file_path}` line {line_start} executes command input that can be influenced by a request, allowing remote command execution on the host.",
             "xss": f"`{file_path}` line {line_start} can return unsanitized content to the browser, enabling script injection and session hijacking.",
             "path_traversal": f"`{file_path}` line {line_start} accepts user-controlled file path segments, allowing reads outside intended directories.",
-            "eval_usage": f"`{file_path}` line {line_start} uses dynamic code execution (`eval`/`Function`), which can execute attacker-supplied payloads.",
+            "eval_usage": f"`{file_path}` line {line_start} uses dynamic code execution (`eval`/`Function`). This allows an attacker to execute arbitrary system-level commands or malicious logic, leading to complete host takeover.",
             "hardcoded_credentials": f"`{file_path}` contains embedded credentials or private key material, creating immediate unauthorized access risk if repository content is exposed.",
             "secret_in_code": f"`{file_path}` stores a secret directly in source control, which can be reused to access protected systems and data.",
             "weak_jwt": f"`{file_path}` relies on weak JWT handling or outdated JWT library behavior, allowing token forgery or validation bypass.",

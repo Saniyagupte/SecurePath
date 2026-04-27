@@ -98,6 +98,8 @@ class AuditReportGenerator:
         self._extra_pages = 1
         for finding in high_crit:
             self.finding_counter += 1
+            # Page numbering logic: Cover(1), Summary(2). 
+            # Finding 1 starts at Page 3. Finding 1 Impact at Page 4.
             self._draw_finding_page(c, finding, self.finding_counter)
             c.showPage()
             self._draw_finding_impact_page(c, finding, self.finding_counter)
@@ -851,7 +853,11 @@ class AuditReportGenerator:
         c.setFont("Helvetica", 9)
         c.drawString(self.MARGIN_X + 160, y, records[:60])
 
-        self._draw_footer(c, 3 + (idx * 2), dark=False)
+        # Page 1: Cover, Page 2: Summary. 
+        # Each finding takes 2 pages: Finding Page + Impact Page.
+        # Finding 1: Page 3 (Finding), Page 4 (Impact)
+        # Finding 2: Page 5 (Finding), Page 6 (Impact)
+        self._draw_footer(c, 2 + (idx * 2), dark=False)
 
     def _draw_additional_findings_table(self, c: canvas.Canvas, findings: list[dict], page_offset: int = 0) -> None:
         # Include medium, low, and info — not just medium/low
