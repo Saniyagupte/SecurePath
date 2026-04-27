@@ -98,22 +98,36 @@ class EXAIEnricher:
             return []
 
         enriched: list[dict] = []
-        batch_size = 4
         done = 0
+        import concurrent.futures
 
-        for i in range(0, total, batch_size):
-            batch = findings[i : i + batch_size]
-            for finding in batch:
+        # Run LLM calls in parallel (up to 10 concurrently) to drastically reduce scan time
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_finding = {}
+            for finding in findings:
                 mapped = self._apply_control_mapping(finding)
                 sev = str(mapped.get("severity", "low")).lower()
                 if sev in {"critical", "high"}:
-                    enriched_finding = self.enrich_finding(mapped)
+                    future = executor.submit(self.enrich_finding, mapped)
                 else:
-                    enriched_finding = self.template_enrichment(mapped)
-                enriched.append(enriched_finding)
+                    future = executor.submit(self.template_enrichment, mapped)
+                future_to_finding[future] = mapped
+
+            for future in concurrent.futures.as_completed(future_to_finding):
+                try:
+                    res = future.result()
+                    enriched.append(res)
+                except Exception as exc:
+                    mapped = future_to_finding[future]
+                    fallback = self.template_enrichment(mapped)
+                    fallback["enrichment_failed"] = True
+                    enriched.append(fallback)
+                    print(f"[SecurePath] Parallel enrichment failed for a finding: {exc}")
+                
                 done += 1
                 pct = int((done / total) * 100)
                 self.progress_callback(pct, f"Enriching finding {done}/{total}...")
+
         self.progress_callback(100, "AI enrichment complete.")
         return enriched
 
