@@ -614,6 +614,8 @@ class SecurityScanner:
                     continue
 
                 try:
+                    if file_path.stat().st_size > 150000:
+                        continue
                     content = file_path.read_text(encoding="utf-8", errors="ignore")
                 except Exception:
                     continue
@@ -678,6 +680,8 @@ class SecurityScanner:
                 if self._is_excluded_repo_path(rel_path):
                     continue
                 try:
+                    if file_path.stat().st_size > 150000:
+                        continue
                     content = file_path.read_text(encoding="utf-8", errors="ignore")
                 except Exception:
                     continue

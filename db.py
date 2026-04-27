@@ -436,6 +436,82 @@ def insert_finding(scan_id: str, finding_dict: "dict[str, Any]") -> str:
     return finding_id
 
 
+def insert_findings_batch(scan_id: str, findings_list: list[dict[str, Any]]) -> None:
+    if not findings_list:
+        return
+    with _get_conn() as conn:
+        for finding_dict in findings_list:
+            finding_id = finding_dict.get("id") or str(uuid.uuid4())
+            bi = finding_dict.get("business_impact")
+            ae = finding_dict.get("assets_exposed")
+            
+            if isinstance(bi, dict):
+                bi_json = json.dumps(bi)
+            elif isinstance(bi, str):
+                bi_json = bi
+            else:
+                bi_json = None
+
+            if isinstance(ae, dict):
+                ae_json = json.dumps(ae)
+            elif isinstance(ae, str):
+                ae_json = ae
+            else:
+                ae_json = None
+
+            values = {
+                "id":                   finding_id,
+                "scan_id":              scan_id,
+                "pass_name":            finding_dict.get("pass_name"),
+                "file_path":            finding_dict.get("file_path"),
+                "line_start":           finding_dict.get("line_start"),
+                "line_end":             finding_dict.get("line_end"),
+                "severity":             finding_dict.get("severity"),
+                "category":             finding_dict.get("category"),
+                "raw_title":            finding_dict.get("raw_title"),
+                "code_snippet":         (finding_dict.get("code_snippet") or "")[:300],
+                "cve_id":               finding_dict.get("cve_id"),
+                "cwe_id":               finding_dict.get("cwe_id"),
+                "owasp_category":       finding_dict.get("owasp_category"),
+                "npm_package":          finding_dict.get("npm_package"),
+                "plain_english":        finding_dict.get("plain_english"),
+                "business_risk":        finding_dict.get("business_risk"),
+                "exploit_scenario":     finding_dict.get("exploit_scenario"),
+                "remediation_json":     finding_dict.get("remediation_json"),
+                "soc2_controls":        finding_dict.get("soc2_controls"),
+                "confidence_score":     finding_dict.get("confidence_score"),
+                "false_positive_risk":  finding_dict.get("false_positive_risk"),
+                "false_positive_reason":finding_dict.get("false_positive_reason"),
+                "enrichment_status":    finding_dict.get("enrichment_status", "pending"),
+                "created_at":           _utc_now_iso(),
+                "business_impact_json": bi_json,
+                "assets_exposed_json":  ae_json,
+            }
+            conn.execute(
+                """
+                INSERT INTO findings (
+                  id, scan_id, pass_name, file_path, line_start, line_end,
+                  severity, category, raw_title, code_snippet, cve_id, cwe_id,
+                  owasp_category, npm_package, plain_english, business_risk,
+                  exploit_scenario, remediation_json, soc2_controls,
+                  confidence_score, false_positive_risk, false_positive_reason,
+                  enrichment_status, created_at,
+                  business_impact_json, assets_exposed_json
+                ) VALUES (
+                  :id, :scan_id, :pass_name, :file_path, :line_start, :line_end,
+                  :severity, :category, :raw_title, :code_snippet, :cve_id, :cwe_id,
+                  :owasp_category, :npm_package, :plain_english, :business_risk,
+                  :exploit_scenario, :remediation_json, :soc2_controls,
+                  :confidence_score, :false_positive_risk, :false_positive_reason,
+                  :enrichment_status, :created_at,
+                  :business_impact_json, :assets_exposed_json
+                )
+                """,
+                values,
+            )
+        conn.commit()
+
+
 def update_finding(finding_id: str, **kwargs: Any) -> None:
     updates = {k: v for k, v in kwargs.items() if k in FINDING_FIELDS}
     if "code_snippet" in updates and updates["code_snippet"] is not None:

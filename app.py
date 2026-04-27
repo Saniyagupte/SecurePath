@@ -16,6 +16,7 @@ from db import (
     get_scan,
     init_db,
     insert_finding,
+    insert_findings_batch,
     log_scan_session,
     mark_pdf_downloaded,
     get_all_sessions,
@@ -289,9 +290,8 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         )
         findings = scanner.run()
 
-        # Persist findings
-        for f in findings:
-            insert_finding(scan_id, f)
+        # Persist findings in a single bulk transaction
+        insert_findings_batch(scan_id, findings)
 
         counts = {s: sum(1 for f in findings if str(f.get("severity")) == s) for s in ["critical", "high", "medium", "low", "info"]}
         risk_score = min(
