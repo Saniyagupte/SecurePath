@@ -257,7 +257,7 @@ Use this exact schema:
     "systems_affected": ["specific systems or services at risk based on file path and code context"],
     "exposure_scope": "internal_only OR external_facing OR third_party_accessible",
     "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
-    "estimated_records_at_risk": "rough estimate or unknown if cannot be determined from code alone"
+    "estimated_records_at_risk": "Specific estimate (e.g. 'all registered users', 'all active sessions', 'approx 5,000 records'). Do NOT say unknown."
   }}
 }}"""
 

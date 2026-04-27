@@ -559,6 +559,8 @@ class AuditReportGenerator:
                     "time_estimate": "< 4 hours",
                     "description": "Define a secure implementation pattern and add tests.",
                     "tradeoff": "Improves confidence but requires engineering time.",
+                    "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
+                    "estimated_records_at_risk": "Specific estimate (e.g. 'all registered users', 'all active sessions', 'approx 5,000 records'). Do NOT say unknown."
                 }
             ] * (3 - len(remediation))
 
@@ -665,7 +667,8 @@ class AuditReportGenerator:
             self.DARK_TEXT,
         )
 
-        self._draw_footer(c, 2 + idx, dark=False)
+        # Cover(1) + Summary(2) + previous findings (idx-1)*2
+        self._draw_footer(c, 1 + (idx * 2), dark=False)
 
     def _parse_json_field(self, finding: dict, field: str) -> dict:
         """Safely parse a JSON text column or return dict directly."""
@@ -706,7 +709,16 @@ class AuditReportGenerator:
         c.setFillColor(self.DARK_TEXT)
         c.setFont("Helvetica-Bold", 13)
         c.drawString(self.MARGIN_X, y, "BUSINESS IMPACT")
-        y -= 20
+        y -= 22
+
+        # ── CTO EXECUTIVE SUMMARY ──
+        cto_summary = str(finding.get("business_risk", "This finding represents a significant security control failure that requires immediate remediation to maintain SOC2 compliance posture."))
+        c.setFillColor(colors.HexColor("#f8fafc"))
+        c.roundRect(self.MARGIN_X, y - 40, full_w, 40, 5, fill=1, stroke=0)
+        c.setFillColor(self.DARK_TEXT)
+        c.setFont("Helvetica-Bold", 10.5)
+        self._draw_wrapped_text(c, cto_summary, self.MARGIN_X + 10, y - 12, full_w - 20, "Helvetica-Bold", 10.5, 13, self.DARK_TEXT)
+        y -= 54
 
         # Financial Exposure — amber highlight box
         fin_exp = str(bi.get("financial_exposure", "Financial exposure data unavailable."))
