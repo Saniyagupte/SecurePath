@@ -1,6 +1,7 @@
+import os
+os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 import hashlib
 import json
-import os
 import re
 import threading
 import uuid

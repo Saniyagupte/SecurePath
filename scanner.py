@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from git import Repo
-from git.exc import GitCommandError
+try:
+    from git import Repo
+    from git.exc import GitCommandError
+    _HAS_GITPYTHON = True
+except ImportError:
+    _HAS_GITPYTHON = False
 
 from db import update_scan
 
@@ -272,16 +276,38 @@ class SecurityScanner:
 
         try:
             # Optimize git clone for 500MB environments
-            Repo.clone_from(
-                repo_url, 
-                str(target), 
-                depth=1, 
-                single_branch=True, 
-                no_tags=True,
-                shallow_submodules=True
-            )
-            repo = Repo(str(target))
-            self.commit_sha = repo.head.commit.hexsha
+            # Try subprocess first as it's more robust on Vercel/Render
+            try:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", repo_url, str(target)],
+                    check=True,
+                    capture_output=True,
+                    timeout=60
+                )
+                # Extract SHA via subprocess
+                sha_proc = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(target),
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                self.commit_sha = sha_proc.stdout.strip()
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+                if _HAS_GITPYTHON:
+                    Repo.clone_from(
+                        repo_url, 
+                        str(target), 
+                        depth=1, 
+                        single_branch=True, 
+                        no_tags=True,
+                        shallow_submodules=True
+                    )
+                    repo = Repo(str(target))
+                    self.commit_sha = repo.head.commit.hexsha
+                else:
+                    raise RuntimeError(f"Git clone failed and no fallback available: {e}")
+
             update_scan(self.scan_id, commit_sha=self.commit_sha, status="scanning")
             return str(target)
         except GitCommandError as exc:
