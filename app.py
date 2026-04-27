@@ -395,14 +395,20 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             target=update_session_on_complete, args=(scan_id,), daemon=True
         ).start()
     except Exception as exc:
-        update_scan(
-            scan_id,
-            status="failed",
-            current_step=f"Failed: {str(exc)[:100]}",
-            error_message=str(exc),
-            progress=100,
-            completed_at=datetime.now(timezone.utc).isoformat(),
-        )
+        import traceback
+        print(f"[{scan_id}] CRITICAL ERROR IN PIPELINE:")
+        traceback.print_exc()
+        try:
+            update_scan(
+                scan_id,
+                status="failed",
+                current_step=f"Failed: {str(exc)[:100]}",
+                error_message=str(exc),
+                progress=100,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as db_exc:
+            print(f"[{scan_id}] FAILED TO UPDATE DB WITH ERROR STATUS: {db_exc}")
         print(f"[SecurePath] Scan {scan_id} failed: {exc}")
 
 
