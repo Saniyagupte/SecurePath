@@ -382,7 +382,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             progress=100,
             current_step="Complete",
             report_path="db://scan_reports",  # pseudo path now
-            completed_at=_now_iso(),
+            completed_at=datetime.now(timezone.utc).isoformat(),
         )
         # Update analytics session with final counts asynchronously
         threading.Thread(
@@ -395,7 +395,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             current_step=f"Failed: {str(exc)[:100]}",
             error_message=str(exc),
             progress=100,
-            completed_at=_now_iso(),
+            completed_at=datetime.now(timezone.utc).isoformat(),
         )
         print(f"[SecurePath] Scan {scan_id} failed: {exc}")
 
