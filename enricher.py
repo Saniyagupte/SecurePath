@@ -104,8 +104,8 @@ class EXAIEnricher:
         done = 0
         import concurrent.futures
 
-        # Run LLM calls in parallel (up to 10 concurrently) to drastically reduce scan time
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Run LLM calls in parallel (up to 3 concurrently) to avoid memory/rate-limit spikes
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_finding = {}
             for finding in findings:
                 mapped = self._apply_control_mapping(finding)
@@ -129,8 +129,14 @@ class EXAIEnricher:
                 
                 done += 1
                 pct = int((done / total) * 100)
-                print(f"[Enricher] Progress: {pct}% ({done}/{total})")
-                self.progress_callback(pct, f"Enriching finding {done}/{total} ({pct}%)...")
+                
+                # Throttle DB updates to prevent Postgres connection exhaustion
+                if done % max(1, total // 10) == 0 or done == total:
+                    print(f"[Enricher] Progress: {pct}% ({done}/{total})")
+                    try:
+                        self.progress_callback(pct, f"Enriching finding {done}/{total} ({pct}%)...")
+                    except Exception as p_exc:
+                        print(f"[Enricher] Error updating progress: {p_exc}")
 
         enrich_time = time.time() - start_time
         print(f"[Enricher] Enrichment completed in {enrich_time:.2f}s")
