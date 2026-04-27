@@ -111,7 +111,7 @@ class EXAIEnricher:
                 mapped = self._apply_control_mapping(finding)
                 sev = str(mapped.get("severity", "low")).lower()
                 if sev in {"critical", "high"}:
-                    future = executor.submit(self.enrich_finding, mapped)
+                    future = executor.submit(self.enrich_finding, mapped, start_time)
                 else:
                     future = executor.submit(self.template_enrichment, mapped)
                 future_to_finding[future] = mapped
@@ -143,10 +143,18 @@ class EXAIEnricher:
         self.progress_callback(100, "AI enrichment complete (100%).")
         return enriched
 
-    def enrich_finding(self, finding: dict) -> dict:
+    def enrich_finding(self, finding: dict, global_start: float = 0) -> dict:
         import time
         start_t = time.time()
         title = finding.get('raw_title', 'unknown')[:30]
+        
+        # If we've exceeded the 15s time budget for the enrichment phase, rapidly drain queue
+        if global_start and (start_t - global_start > 15):
+            print(f"[Enricher] Global timeout reached. Bypassing LLM for: {title}")
+            fallback = self.template_enrichment(finding)
+            fallback["enrichment_failed"] = True
+            return fallback
+
         print(f"[Enricher] Starting LLM call for finding: {title}")
         delays = [1, 2] # Reduced delays to stay within 60s
         last_error: Exception | None = None
