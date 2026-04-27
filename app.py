@@ -317,7 +317,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         )
 
         # PHASE 2: ENRICH (60-85%)
-        print(f"[{scan_id}] PHASE 2: AI Enrichment initiated for {len(findings)} findings...")
+        print(f"[{scan_id}] PHASE 2: AI Enrichment started for {len(findings)} findings.")
         def enrich_progress(p: int, step: str) -> None:
             mapped = 60 + int(max(0, min(100, p)) * 0.25)
             progress_cb(mapped, step)
