@@ -88,6 +88,12 @@ class AuditReportGenerator:
         c.showPage()
 
         high_crit = [f for f in findings if str(f.get("severity", "")).lower() in {"critical", "high"}]
+        # Limit detailed pages to top 20 findings to prevent OOM memory crashes on massive repositories
+        high_crit.sort(key=lambda x: (
+            0 if str(x.get("severity", "")).lower() == "critical" else 1,
+            -int(x.get("confidence_score") or 0)
+        ))
+        high_crit = high_crit[:20]
         self.finding_counter = 0
         self._extra_pages = 1
         for finding in high_crit:

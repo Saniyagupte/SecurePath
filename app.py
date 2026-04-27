@@ -278,6 +278,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             update_scan(scan_id, progress=p, current_step=step)
 
         # PHASE 1: SCAN (0-60%)
+        print(f"[{scan_id}] PHASE 1: Cloning and Scanning initiated...")
         update_scan(
             scan_id,
             status="cloning",
@@ -316,6 +317,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         )
 
         # PHASE 2: ENRICH (60-85%)
+        print(f"[{scan_id}] PHASE 2: AI Enrichment initiated for {len(findings)} findings...")
         def enrich_progress(p: int, step: str) -> None:
             mapped = 60 + int(max(0, min(100, p)) * 0.25)
             progress_cb(mapped, step)
@@ -359,6 +361,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
         update_scan(scan_id, findings_hash=findings_hash)
 
         # PHASE 3: GENERATE (85-100%)
+        print(f"[{scan_id}] PHASE 3: Generating Audit Evidence PDF...")
         update_scan(
             scan_id,
             status="generating",
@@ -386,6 +389,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             report_path="db://scan_reports",  # pseudo path now
             completed_at=datetime.now(timezone.utc).isoformat(),
         )
+        print(f"[{scan_id}] PHASE 4: Scan successfully completed.")
         # Update analytics session with final counts asynchronously
         threading.Thread(
             target=update_session_on_complete, args=(scan_id,), daemon=True
