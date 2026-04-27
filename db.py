@@ -20,13 +20,25 @@ from urllib.parse import urlparse
 # ---------------------------------------------------------------------------
 # Path config — used only when SQLite backend is active
 # ---------------------------------------------------------------------------
+_IS_VERCEL = os.getenv("VERCEL") == "1"
 _DATA_DIR = os.getenv("DATA_DIR", "")
+
+# Vercel has a read-only filesystem except for /tmp
+if _IS_VERCEL and not _DATA_DIR:
+    _DATA_DIR = "/tmp"
+
 if _DATA_DIR:
     os.makedirs(_DATA_DIR, exist_ok=True)
 
 DB_PATH     = os.path.join(_DATA_DIR, "securepath.db") if _DATA_DIR else "securepath.db"
 REPORTS_DIR = os.path.join(_DATA_DIR, "reports") if _DATA_DIR else "reports"
-os.makedirs(REPORTS_DIR, exist_ok=True)
+
+# Ensure reports directory exists, but don't crash if it's read-only
+try:
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+except OSError:
+    if not _IS_VERCEL:
+        raise
 
 
 # ---------------------------------------------------------------------------
