@@ -191,13 +191,15 @@ def scans_history():
     return jsonify(get_all_scans())
 
 
+def clean(x):
+    return (x or "").strip().strip("'").strip('"')
+
 @app.get("/admin")
 def admin_dashboard():
-    return {
-        "received": repr(request.args.get("key")),
-        "env": repr(ADMIN_PASSWORD),
-        "match": request.args.get("key") == ADMIN_PASSWORD
-    }
+    if clean(request.args.get("key")) != clean(ADMIN_PASSWORD):
+        return "Not authorised", 403
+
+    return render_template("admin.html")
 
     sessions  = get_all_sessions()
     total     = len(sessions)
