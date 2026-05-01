@@ -865,7 +865,7 @@ class AuditReportGenerator:
             y -= 20
 
         # Estimated Records at Risk
-        records = str(ae.get("estimated_records_at_risk", "unknown"))
+        records = str(ae.get("estimated_records_at_risk", "Quantified after integration with production data sources."))
         c.setFillColor(self.DARK_TEXT)
         c.setFont("Helvetica-Bold", 9)
         c.drawString(self.MARGIN_X, y, "ESTIMATED RECORDS AT RISK")

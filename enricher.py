@@ -105,8 +105,7 @@ class EXAIEnricher:
         import concurrent.futures
 
         # Run LLM calls in parallel (up to 3 concurrently) to avoid memory/rate-limit spikes
-        # Render Free Tier: Reduce workers to 2 to prevent OOM (Out of Memory) crashes
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_finding = {}
             for finding in findings:
                 mapped = self._apply_control_mapping(finding)
@@ -150,8 +149,7 @@ class EXAIEnricher:
         title = finding.get('raw_title', 'unknown')[:30]
         
         # If we've exceeded the 15s time budget for the enrichment phase, rapidly drain queue
-        # Render Free Tier: Tighten budget to 12s to ensure we finish PDF before Gunicorn timeout
-        if global_start and (start_t - global_start > 12):
+        if global_start and (start_t - global_start > 15):
             print(f"[Enricher] Global timeout reached. Bypassing LLM for: {title}")
             fallback = self.template_enrichment(finding)
             fallback["enrichment_failed"] = True
