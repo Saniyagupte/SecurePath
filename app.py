@@ -199,7 +199,6 @@ def admin_dashboard():
     if clean(request.args.get("key")) != clean(ADMIN_PASSWORD):
         return "Not authorised", 403
 
-    return render_template("admin.html")
 
     sessions  = get_all_sessions()
     total     = len(sessions)
