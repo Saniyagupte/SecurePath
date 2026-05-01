@@ -12,6 +12,19 @@ from soc2_controls import apply_severity_floor, get_soc2_mapping_for_finding
 
 load_dotenv()
 
+# ── Timeout constants ──────────────────────────────────────────────────────────
+# Total wall-clock budget for the entire enrich_all() call.
+# Set comfortably under the outer pipeline wrapper's 90s timeout so the
+# enricher always exits cleanly before the wrapper cuts the thread.
+ENRICH_TOTAL_BUDGET_SECONDS = 65
+
+# Hard ceiling for a single urlopen() call (connect + read combined).
+# urllib only takes a single float — it covers both phases.
+LLM_HTTP_TIMEOUT_SECONDS = 12
+
+# Max LLM attempts per finding across all backends/models
+MAX_LLM_ATTEMPTS = 2
+
 
 class EXAIEnricher:
     def __init__(self, scan_id: str, progress_callback):
@@ -23,7 +36,6 @@ class EXAIEnricher:
         configured_model = os.getenv("EXAI_MODEL", "").strip()
         model_candidates = [configured_model] if configured_model else []
         if not model_candidates:
-            # Order models by reliability: smaller/simpler work better than large models
             model_candidates = [
                 "llama-3.1-8b-instant",
                 "mixtral-8x7b-32768",
@@ -31,31 +43,25 @@ class EXAIEnricher:
                 "llama-3.3-70b-versatile",
             ]
 
-        # Primary backend from EXAI_PROVIDER
         if self.provider == "groq":
             groq_key = os.getenv("EXAI_API_KEY", "").strip() or os.getenv("GROQ_API_KEY", "").strip()
-            self.backends.append(
-                {
-                    "name": "groq",
-                    "base_url": os.getenv("EXAI_BASE_URL", "").strip() or "https://api.groq.com/openai/v1",
-                    "api_key": groq_key,
-                    "models": model_candidates,
-                    "extra_headers": {},
-                }
-            )
+            self.backends.append({
+                "name": "groq",
+                "base_url": os.getenv("EXAI_BASE_URL", "").strip() or "https://api.groq.com/openai/v1",
+                "api_key": groq_key,
+                "models": model_candidates,
+                "extra_headers": {},
+            })
         elif self.provider == "openai":
             openai_key = os.getenv("EXAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
-            self.backends.append(
-                {
-                    "name": "openai",
-                    "base_url": os.getenv("EXAI_BASE_URL", "").strip() or "https://api.openai.com/v1",
-                    "api_key": openai_key,
-                    "models": [configured_model] if configured_model else ["gpt-4o-mini", "gpt-4o"],
-                    "extra_headers": {},
-                }
-            )
+            self.backends.append({
+                "name": "openai",
+                "base_url": os.getenv("EXAI_BASE_URL", "").strip() or "https://api.openai.com/v1",
+                "api_key": openai_key,
+                "models": [configured_model] if configured_model else ["gpt-4o-mini", "gpt-4o"],
+                "extra_headers": {},
+            })
 
-        # Automatic fallback backend: OpenRouter free models (if key provided)
         openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         if openrouter_key:
             or_models_raw = os.getenv(
@@ -63,134 +69,156 @@ class EXAIEnricher:
                 "meta-llama/llama-3.1-8b-instruct:free,google/gemma-2-9b-it:free,mistralai/mistral-7b-instruct:free",
             )
             or_models = [m.strip() for m in or_models_raw.split(",") if m.strip()]
-            self.backends.append(
-                {
-                    "name": "openrouter",
-                    "base_url": "https://openrouter.ai/api/v1",
-                    "api_key": openrouter_key,
-                    "models": or_models,
-                    "extra_headers": {
-                        "HTTP-Referer": os.getenv("EXAI_OPENROUTER_REFERER", "https://securepath.local"),
-                        "X-Title": "SecurePath",
-                    },
-                }
-            )
+            self.backends.append({
+                "name": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": openrouter_key,
+                "models": or_models,
+                "extra_headers": {
+                    "HTTP-Referer": os.getenv("EXAI_OPENROUTER_REFERER", "https://securepath.local"),
+                    "X-Title": "SecurePath",
+                },
+            })
 
-        # Secondary fallback backend: OpenAI if key exists and not already primary
         if self.provider != "openai":
             openai_key = os.getenv("OPENAI_API_KEY", "").strip()
             if openai_key:
-                self.backends.append(
-                    {
-                        "name": "openai",
-                        "base_url": "https://api.openai.com/v1",
-                        "api_key": openai_key,
-                        "models": ["gpt-4o-mini", "gpt-4o"],
-                        "extra_headers": {},
-                    }
-                )
+                self.backends.append({
+                    "name": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": openai_key,
+                    "models": ["gpt-4o-mini", "gpt-4o"],
+                    "extra_headers": {},
+                })
+
         self.curated_mode = os.getenv("EXAI_CURATED_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # PUBLIC: enrich_all — sequential, budget-aware, no nested executors
+    # ─────────────────────────────────────────────────────────────────────────
+
     def enrich_all(self, findings: list[dict]) -> list[dict]:
-        import time
-        start_time = time.time()
-        print(f"[Enricher] Starting enrichment for {len(findings)} findings...")
+        """
+        Process findings sequentially within a hard wall-clock budget.
+
+        WHY SEQUENTIAL (not parallel with ThreadPoolExecutor):
+        - The outer pipeline_fix.py wraps this whole call in its own executor
+          with a future.result(timeout=90). Nested executors don't propagate
+          cancellation — the inner threads keep blocking on urlopen() even after
+          the outer timeout fires, exhausting the DB connection pool and keeping
+          the Railway dyno busy.
+        - Railway/Render free tier is single vCPU. The bottleneck is network
+          I/O to Groq/OpenAI, not CPU. Sequential is just as fast in practice.
+        - Budget tracking is trivially correct when sequential.
+        """
+        global_start = time.monotonic()
         total = len(findings)
+
+        print(f"[Enricher] Starting enrichment: {total} findings | "
+              f"budget={ENRICH_TOTAL_BUDGET_SECONDS}s | http_timeout={LLM_HTTP_TIMEOUT_SECONDS}s")
+
         if total == 0:
-            self.progress_callback(100, "No findings to enrich.")
+            self._safe_progress(100, "No findings to enrich.")
             return []
 
         enriched: list[dict] = []
-        done = 0
-        import concurrent.futures
 
-        # Run LLM calls in parallel (up to 3 concurrently) to avoid memory/rate-limit spikes
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_finding = {}
-            for finding in findings:
-                mapped = self._apply_control_mapping(finding)
-                sev = str(mapped.get("severity", "low")).lower()
-                if sev in {"critical", "high"}:
-                    future = executor.submit(self.enrich_finding, mapped, start_time)
-                else:
-                    future = executor.submit(self.template_enrichment, mapped)
-                future_to_finding[future] = mapped
+        for idx, finding in enumerate(findings):
+            elapsed = time.monotonic() - global_start
+            remaining = ENRICH_TOTAL_BUDGET_SECONDS - elapsed
 
-            for future in concurrent.futures.as_completed(future_to_finding):
-                try:
-                    res = future.result()
-                    enriched.append(res)
-                except Exception as exc:
-                    mapped = future_to_finding[future]
-                    fallback = self.template_enrichment(mapped)
-                    fallback["enrichment_failed"] = True
-                    enriched.append(fallback)
-                    print(f"[SecurePath] Parallel enrichment failed for a finding: {exc}")
-                
-                done += 1
-                pct = int((done / total) * 100)
-                
-                # Throttle DB updates to prevent Postgres connection exhaustion
-                if done % max(1, total // 10) == 0 or done == total:
-                    print(f"[Enricher] Progress: {pct}% ({done}/{total})")
-                    try:
-                        self.progress_callback(pct, f"Enriching finding {done}/{total} ({pct}%)...")
-                    except Exception as p_exc:
-                        print(f"[Enricher] Error updating progress: {p_exc}")
+            mapped = self._apply_control_mapping(finding)
+            sev = str(mapped.get("severity", "low")).lower()
 
-        enrich_time = time.time() - start_time
-        print(f"[Enricher] Enrichment completed in {enrich_time:.2f}s")
-        self.progress_callback(100, "AI enrichment complete (100%).")
+            # If budget is too tight for even one HTTP call, fall back immediately
+            if remaining < (LLM_HTTP_TIMEOUT_SECONDS + 3):
+                print(f"[Enricher] Budget tight ({remaining:.1f}s left) at finding "
+                      f"{idx + 1}/{total} — using template fallback for remainder.")
+                result = self.template_enrichment(mapped)
+                result["enrichment_failed"] = True
+                enriched.append(result)
+                continue
+
+            # Only call LLM for critical/high — templates are sufficient for medium/low
+            if sev in {"critical", "high"}:
+                result = self._enrich_with_llm(mapped, global_start)
+            else:
+                result = self.template_enrichment(mapped)
+
+            enriched.append(result)
+
+            done = idx + 1
+            pct = int((done / total) * 100)
+            if done % max(1, total // 10) == 0 or done == total:
+                elapsed_now = time.monotonic() - global_start
+                print(f"[Enricher] {pct}% ({done}/{total}) elapsed={elapsed_now:.1f}s")
+                self._safe_progress(pct, f"Enriched {done}/{total} findings ({pct}%)...")
+
+        total_elapsed = time.monotonic() - global_start
+        print(f"[Enricher] Complete in {total_elapsed:.2f}s for {total} findings.")
+        self._safe_progress(100, "AI enrichment complete.")
         return enriched
 
-    def enrich_finding(self, finding: dict, global_start: float = 0) -> dict:
-        import time
-        start_t = time.time()
-        title = finding.get('raw_title', 'unknown')[:30]
-        
-        # If we've exceeded the 15s time budget for the enrichment phase, rapidly drain queue
-        if global_start and (start_t - global_start > 15):
-            print(f"[Enricher] Global timeout reached. Bypassing LLM for: {title}")
-            fallback = self.template_enrichment(finding)
-            fallback["enrichment_failed"] = True
-            return fallback
+    def _safe_progress(self, pct: int, msg: str) -> None:
+        try:
+            self.progress_callback(pct, msg)
+        except Exception as exc:
+            print(f"[Enricher] Progress callback error (non-fatal): {exc}")
 
-        print(f"[Enricher] Starting LLM call for finding: {title}")
-        delays = [1, 2] # Reduced delays to stay within 60s
-        last_error: Exception | None = None
+    # ─────────────────────────────────────────────────────────────────────────
+    # PRIVATE: LLM call with budget awareness + clean fallback
+    # ─────────────────────────────────────────────────────────────────────────
 
-        for attempt in range(1, 3): # Reduced to 2 attempts max
+    def _enrich_with_llm(self, finding: dict, global_start: float) -> dict:
+        title = finding.get("raw_title", "unknown")[:40]
+
+        for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
+            # Re-check budget before every attempt
+            elapsed = time.monotonic() - global_start
+            remaining = ENRICH_TOTAL_BUDGET_SECONDS - elapsed
+            if remaining < (LLM_HTTP_TIMEOUT_SECONDS + 3):
+                print(f"[Enricher] Skipping LLM attempt {attempt} for '{title}' "
+                      f"— only {remaining:.1f}s remaining.")
+                break
+
+            t_start = time.monotonic()
             try:
                 payload = self._call_llm(finding)
-                duration = time.time() - start_t
-                print(f"[Enricher] LLM call succeeded for '{title}' in {duration:.2f}s (attempt {attempt})")
+                duration = time.monotonic() - t_start
+                print(f"[Enricher] LLM OK '{title}' in {duration:.2f}s (attempt {attempt})")
                 return self._merge_enrichment(finding, payload, enrichment_failed=False)
-            except Exception as exc:
-                last_error = exc
-                duration = time.time() - start_t
-                print(f"[Enricher] LLM attempt {attempt} failed for '{title}' after {duration:.2f}s: {exc}")
-                if attempt < 2:
-                    time.sleep(delays[attempt - 1])
 
-        print(f"[Enricher] Giving up on LLM for '{title}', falling back to template.")
-        fallback = self.template_enrichment(finding)
-        fallback["enrichment_failed"] = True
-        # Don't append error message to false_positive_reason - keep that field for actual security findings
-        # API errors are infrastructure issues, not finding-level validation
-        return fallback
+            except Exception as exc:
+                duration = time.monotonic() - t_start
+                print(f"[Enricher] LLM attempt {attempt}/{MAX_LLM_ATTEMPTS} failed "
+                      f"for '{title}' after {duration:.2f}s: {exc}")
+
+                if attempt < MAX_LLM_ATTEMPTS:
+                    # Minimal sleep — don't burn remaining budget
+                    elapsed_now = time.monotonic() - global_start
+                    sleep_for = min(1.0, (ENRICH_TOTAL_BUDGET_SECONDS - elapsed_now) / 6)
+                    if sleep_for > 0.1:
+                        time.sleep(sleep_for)
+
+        print(f"[Enricher] All LLM attempts exhausted for '{title}' — template fallback.")
+        result = self.template_enrichment(finding)
+        result["enrichment_failed"] = True
+        return result
 
     def _call_llm(self, finding: dict) -> dict:
         usable_backends = [b for b in self.backends if b.get("api_key")]
         if not usable_backends:
             raise RuntimeError(
-                "Missing EXAI key. Set GROQ_API_KEY (or EXAI_API_KEY), "
-                "or set OPENROUTER_API_KEY/OPENAI_API_KEY for fallback."
+                "No LLM API key configured. Set GROQ_API_KEY (or EXAI_API_KEY), "
+                "OPENROUTER_API_KEY, or OPENAI_API_KEY."
             )
 
-        system = """You are a principal application security engineer with 12 years 
-of experience auditing Node.js applications and preparing SOC2 compliance 
-evidence. You explain vulnerabilities with surgical precision. You never use 
-filler phrases. Every sentence you write saves an engineer real time."""
+        system = (
+            "You are a principal application security engineer with 12 years "
+            "of experience auditing Node.js applications and preparing SOC2 compliance "
+            "evidence. You explain vulnerabilities with surgical precision. You never use "
+            "filler phrases. Every sentence you write saves an engineer real time."
+        )
 
         prompt = f"""Analyze this security finding from a Node.js/Express application:
 
@@ -213,58 +241,41 @@ Use this exact schema:
 {{
   "plain_english": "One precise sentence. Name the specific file and what specifically can go wrong.",
   "remediation": [
-    {{
-      "rank": 1,
-      "label": "Quick fix",
-      "time_estimate": "< 1 hour",
+    {{"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
       "description": "Exact code change. Show before/after if concise.",
-      "tradeoff": "What this fixes and what remains."
-    }},
-    {{
-      "rank": 2,
-      "label": "Proper fix",
-      "time_estimate": "< 4 hours",
+      "tradeoff": "What this fixes and what remains."}},
+    {{"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
       "description": "Secure pattern/library recommendation with steps.",
-      "tradeoff": "Why this is better and associated cost."
-    }},
-    {{
-      "rank": 3,
-      "label": "Robust fix",
-      "time_estimate": "1-2 days",
+      "tradeoff": "Why this is better and associated cost."}},
+    {{"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
       "description": "Architectural hardening with specific packages if needed.",
-      "tradeoff": "Long-term posture gain and maintenance cost."
-    }}
+      "tradeoff": "Long-term posture gain and maintenance cost."}}
   ],
   "business_impact": {{
-    "financial_exposure": "Realistic cost if exploited - reference actual figures like average breach costs $4.4M, GDPR fines up to 4% annual revenue. Be specific to this finding type.",
+    "financial_exposure": "Realistic cost if exploited. Reference actual figures.",
     "compliance_violations": [
-      {{
-        "framework": "SOC2",
-        "control": "CC6.1",
-        "meaning": "What this control requires and how this finding violates it"
-      }},
-      {{
-        "framework": "ISO 27001",
-        "control": "A.9.4.1",
-        "meaning": "What this control requires and how this finding violates it"
-      }}
+      {{"framework": "SOC2", "control": "CC6.1",
+        "meaning": "What this control requires and how this finding violates it"}},
+      {{"framework": "ISO 27001", "control": "A.9.4.1",
+        "meaning": "What this control requires and how this finding violates it"}}
     ],
     "exploitation_likelihood": "low/medium/high",
     "likelihood_reason": "One sentence why, based on the specific code shown"
   }},
   "assets_exposed": {{
-    "data_types": ["specific data types at risk: PII, credentials, financial data, API keys, session tokens, etc"],
-    "systems_affected": ["specific systems or services at risk based on file path and code context"],
+    "data_types": ["PII", "credentials", "session tokens"],
+    "systems_affected": ["backend API", "database"],
     "exposure_scope": "internal_only OR external_facing OR third_party_accessible",
-    "exposure_explanation": "One sentence describing exactly what an attacker can access if this is exploited",
-    "estimated_records_at_risk": "Specific estimate (e.g. 'all registered users', 'all active sessions', 'approx 5,000 records'). Do NOT say unknown."
+    "exposure_explanation": "One sentence on what an attacker can access.",
+    "estimated_records_at_risk": "Specific estimate — do NOT say unknown."
   }}
 }}"""
 
         last_error: Exception | None = None
+
         for backend in usable_backends:
             for model in backend["models"]:
-                payload = {
+                request_body = json.dumps({
                     "model": model,
                     "temperature": 0.2,
                     "max_tokens": 2400,
@@ -273,72 +284,79 @@ Use this exact schema:
                         {"role": "user", "content": prompt},
                     ],
                     "response_format": {"type": "json_object"},
-                }
+                }).encode("utf-8")
+
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {backend['api_key']}",
                 }
                 headers.update(backend.get("extra_headers", {}))
+
                 req = urllib.request.Request(
                     url=f"{backend['base_url'].rstrip('/')}/chat/completions",
-                    data=json.dumps(payload).encode("utf-8"),
+                    data=request_body,
                     headers=headers,
                     method="POST",
                 )
+
                 try:
-                    with urllib.request.urlopen(req, timeout=15) as resp: # Reduced timeout from 60 to 15s to respect 60s total deadline
+                    # Single float timeout — covers connect + read.
+                    # This is the ONLY place I/O blocks; everything else is CPU.
+                    with urllib.request.urlopen(req, timeout=LLM_HTTP_TIMEOUT_SECONDS) as resp:
                         body = resp.read().decode("utf-8")
+
                     data = json.loads(body)
                     choices = data.get("choices", [])
                     if not choices:
-                        raise RuntimeError("LLM response missing choices.")
-                    message = choices[0].get("message", {}) or {}
+                        raise RuntimeError(f"{backend['name']}/{model}: response missing choices")
+
+                    message = choices[0].get("message") or {}
                     raw = str(message.get("content", "")).strip()
                     if not raw:
-                        raise RuntimeError("LLM response content was empty.")
+                        raise RuntimeError(f"{backend['name']}/{model}: empty content in response")
+
+                    # Strip markdown fences defensively
                     raw = re.sub(r"^```json\s*", "", raw, flags=re.IGNORECASE)
                     raw = re.sub(r"^```\s*", "", raw, flags=re.IGNORECASE)
                     raw = re.sub(r"\s*```$", "", raw, flags=re.IGNORECASE)
+
                     return self._parse_json_object(raw)
+
                 except urllib.error.HTTPError as exc:
-                    error_body = exc.read().decode("utf-8", errors="ignore")
-                    # model/provider unavailable -> try next model/backend
-                    if exc.code in {400, 404, 422, 429}:
-                        last_error = RuntimeError(
-                            f"{backend['name']} model {model} unavailable: HTTP {exc.code}: {error_body[:220]}"
-                        )
-                        continue
-                    if exc.code in {401, 403}:
-                        # Allow trying fallback providers if this one is blocked
-                        last_error = RuntimeError(
-                            f"{backend['name']} auth/access blocked (HTTP {exc.code}): {error_body[:220]}"
-                        )
-                        continue
+                    body_snippet = exc.read().decode("utf-8", errors="ignore")[:220]
                     last_error = RuntimeError(
-                        f"{backend['name']} model {model} HTTP {exc.code}: {error_body[:220]}"
+                        f"{backend['name']}/{model} HTTP {exc.code}: {body_snippet}"
                     )
+                    # All HTTP errors → try next model/backend (rate limit, bad model, auth)
                     continue
+
                 except Exception as exc:
                     last_error = RuntimeError(
-                        f"{backend['name']} request failed for model {model}: {exc}"
+                        f"{backend['name']}/{model} {type(exc).__name__}: {exc}"
                     )
                     continue
-        raise last_error or RuntimeError("All configured EXAI models failed.")
+
+        raise last_error or RuntimeError("All configured LLM backends failed.")
 
     def _parse_json_object(self, text: str) -> dict[str, Any]:
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 return parsed
-            raise ValueError("Response is not a JSON object")
+            raise ValueError("LLM response is not a JSON object")
         except json.JSONDecodeError:
+            # Last-ditch: extract first {...} block
             start = text.find("{")
             end = text.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                parsed = json.loads(text[start : end + 1])
+            if start != -1 and end > start:
+                parsed = json.loads(text[start:end + 1])
                 if isinstance(parsed, dict):
                     return parsed
             raise
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Control mapping + merge (unchanged logic, cleaner style)
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _apply_control_mapping(self, finding: dict) -> dict:
         mapping = get_soc2_mapping_for_finding(finding)
@@ -347,14 +365,12 @@ Use this exact schema:
             mapping["severity_floor"],
         )
         mapped = dict(finding)
-        mapped.update(
-            {
-                "severity": severity,
-                "vulnerability_type": mapping["vulnerability_type"],
-                "soc2_controls": mapping["controls"],
-                "soc2_rationale": mapping["rationale"],
-            }
-        )
+        mapped.update({
+            "severity": severity,
+            "vulnerability_type": mapping["vulnerability_type"],
+            "soc2_controls": mapping["controls"],
+            "soc2_rationale": mapping["rationale"],
+        })
         return mapped
 
     def _merge_enrichment(self, finding: dict, enrichment: dict, enrichment_failed: bool) -> dict:
@@ -365,35 +381,35 @@ Use this exact schema:
         if not isinstance(remediation, list):
             remediation = []
 
-        # Extract business_impact from LLM response, fall back to template
         business_impact = enrichment.get("business_impact")
         if not isinstance(business_impact, dict) or not business_impact:
             business_impact = base.get("business_impact", {})
 
-        # Extract assets_exposed from LLM response, fall back to template
         assets_exposed = enrichment.get("assets_exposed")
         if not isinstance(assets_exposed, dict) or not assets_exposed:
             assets_exposed = base.get("assets_exposed", {})
 
-        merged.update(
-            {
-                "plain_english": str(enrichment.get("plain_english") or base.get("plain_english"))[:800],
-                "business_risk": str(base.get("business_risk"))[:1200],
-                "exploit_scenario": str(base.get("exploit_scenario"))[:1200],
-                "remediation": remediation if remediation else base.get("remediation", []),
-                "soc2_controls": base.get("soc2_controls", []),
-                "soc2_rationale": base.get("soc2_rationale", {}),
-                "vulnerability_type": base.get("vulnerability_type"),
-                "confidence_score": base.get("confidence_score", 7),
-                "false_positive_risk": base.get("false_positive_risk", "medium"),
-                "false_positive_reason": str(base.get("false_positive_reason"))[:800],
-                "business_impact": business_impact,
-                "assets_exposed": assets_exposed,
-                "enrichment_failed": enrichment_failed,
-                "enrichment_status": "failed" if enrichment_failed else "complete",
-            }
-        )
+        merged.update({
+            "plain_english": str(enrichment.get("plain_english") or base.get("plain_english"))[:800],
+            "business_risk": str(base.get("business_risk"))[:1200],
+            "exploit_scenario": str(base.get("exploit_scenario"))[:1200],
+            "remediation": remediation or base.get("remediation", []),
+            "soc2_controls": base.get("soc2_controls", []),
+            "soc2_rationale": base.get("soc2_rationale", {}),
+            "vulnerability_type": base.get("vulnerability_type"),
+            "confidence_score": base.get("confidence_score", 7),
+            "false_positive_risk": base.get("false_positive_risk", "medium"),
+            "false_positive_reason": str(base.get("false_positive_reason"))[:800],
+            "business_impact": business_impact,
+            "assets_exposed": assets_exposed,
+            "enrichment_failed": enrichment_failed,
+            "enrichment_status": "failed" if enrichment_failed else "complete",
+        })
         return merged
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Template enrichment — fast, no I/O, always succeeds
+    # ─────────────────────────────────────────────────────────────────────────
 
     def template_enrichment(self, finding: dict) -> dict:
         mapped = self._apply_control_mapping(finding)
@@ -433,12 +449,10 @@ Use this exact schema:
             rem = curated
 
         fp_risk = "low" if severity in {"critical", "high"} else "medium"
-
         base_confidence = 8 if severity in {"critical", "high"} else 6
         if category == "secrets":
             base_confidence = min(base_confidence, 6)
 
-        # Build default business_impact based on category/severity
         bi_financial_templates = {
             "injection": "SQL injection breaches average $4.4M in remediation costs (IBM 2023). GDPR fines up to 4% annual revenue if PII is exfiltrated. Regulatory notification costs add $150-$200 per affected record.",
             "auth": "Account takeover incidents cost $4.2M on average. Credential stuffing losses average $6M annually per enterprise. SOC2 audit failure can delay revenue-generating contracts.",
@@ -483,7 +497,7 @@ Use this exact schema:
                 {"framework": "ISO 27001", "control": "A.12.6.1", "meaning": "Requires technical vulnerability management. Unaddressed findings represent unmanaged risk."},
             ],
         }
-        bi_likelihood = "high" if severity in {"critical"} else ("medium" if severity in {"high"} else "low")
+        bi_likelihood = "high" if severity == "critical" else ("medium" if severity == "high" else "low")
         bi_likelihood_reason_templates = {
             "injection": "Injection endpoints are actively targeted by automated scanners and require no authentication to exploit.",
             "auth": "Authentication bypasses are commonly exploited via credential stuffing and session manipulation.",
@@ -502,8 +516,7 @@ Use this exact schema:
             "likelihood_reason": bi_likelihood_reason_templates.get(category, bi_likelihood_reason_templates["misc"]),
         }
 
-        # Build default assets_exposed based on category
-        ae_data_types_templates = {
+        ae_data_types = {
             "injection": ["PII", "credentials", "financial data", "session tokens"],
             "auth": ["session tokens", "user credentials", "PII"],
             "secrets": ["API keys", "credentials", "private keys", "database connection strings"],
@@ -513,7 +526,7 @@ Use this exact schema:
             "crypto": ["encrypted data", "PII", "financial data"],
             "misc": ["application data"],
         }
-        ae_systems_templates = {
+        ae_systems = {
             "injection": ["database server", "backend API"],
             "auth": ["authentication service", "user management"],
             "secrets": ["external services", "cloud infrastructure", "databases"],
@@ -523,17 +536,13 @@ Use this exact schema:
             "crypto": ["data storage", "communication channels"],
             "misc": ["application stack"],
         }
-        ae_scope_map = {
-            "injection": "external_facing",
-            "auth": "external_facing",
-            "secrets": "third_party_accessible",
-            "config": "external_facing",
-            "deps": "external_facing",
-            "xss": "external_facing",
-            "crypto": "internal_only",
-            "misc": "internal_only",
+        ae_scope = {
+            "injection": "external_facing", "auth": "external_facing",
+            "secrets": "third_party_accessible", "config": "external_facing",
+            "deps": "external_facing", "xss": "external_facing",
+            "crypto": "internal_only", "misc": "internal_only",
         }
-        ae_explanation_templates = {
+        ae_explanation = {
             "injection": f"An attacker exploiting `{file_path}` can read or modify database records, potentially extracting all stored user data.",
             "auth": f"An attacker can bypass authentication in `{file_path}` to impersonate users and access their protected resources.",
             "secrets": f"Exposed credentials in `{file_path}` grant direct access to connected systems and stored data.",
@@ -545,32 +554,31 @@ Use this exact schema:
         }
 
         assets_exposed = {
-            "data_types": ae_data_types_templates.get(category, ae_data_types_templates["misc"]),
-            "systems_affected": ae_systems_templates.get(category, ae_systems_templates["misc"]),
-            "exposure_scope": ae_scope_map.get(category, "internal_only"),
-            "exposure_explanation": ae_explanation_templates.get(category, ae_explanation_templates["misc"]),
+            "data_types": ae_data_types.get(category, ae_data_types["misc"]),
+            "systems_affected": ae_systems.get(category, ae_systems["misc"]),
+            "exposure_scope": ae_scope.get(category, "internal_only"),
+            "exposure_explanation": ae_explanation.get(category, ae_explanation["misc"]),
             "estimated_records_at_risk": "unknown",
         }
 
         enriched = dict(mapped)
-        enriched.update(
-            {
-                "plain_english": self._specific_plain_english(mapped)[:800],
-                "business_risk": risk_templates.get(category, risk_templates["misc"])[:1200],
-                "exploit_scenario": exploit_templates.get(category, exploit_templates["misc"])[:1200],
-                "remediation": rem,
-                "vulnerability_type": vuln_type,
-                "confidence_score": base_confidence,
-                "false_positive_risk": fp_risk,
-                "false_positive_reason": (
-                    f"The finding is pattern-based (CWE {cwe}, {owasp}); manual validation should confirm runtime reachability and exploitability."
-                )[:800],
-                "business_impact": business_impact,
-                "assets_exposed": assets_exposed,
-                "enrichment_failed": False,
-                "enrichment_status": "complete",
-            }
-        )
+        enriched.update({
+            "plain_english": self._specific_plain_english(mapped)[:800],
+            "business_risk": risk_templates.get(category, risk_templates["misc"])[:1200],
+            "exploit_scenario": exploit_templates.get(category, exploit_templates["misc"])[:1200],
+            "remediation": rem,
+            "vulnerability_type": vuln_type,
+            "confidence_score": base_confidence,
+            "false_positive_risk": fp_risk,
+            "false_positive_reason": (
+                f"The finding is pattern-based (CWE {cwe}, {owasp}); "
+                f"manual validation should confirm runtime reachability and exploitability."
+            )[:800],
+            "business_impact": business_impact,
+            "assets_exposed": assets_exposed,
+            "enrichment_failed": False,
+            "enrichment_status": "complete",
+        })
         return enriched
 
     def _specific_plain_english(self, finding: dict[str, Any]) -> str:
@@ -585,113 +593,68 @@ Use this exact schema:
             "command_injection": f"`{file_path}` line {line_start} executes command input that can be influenced by a request, allowing remote command execution on the host.",
             "xss": f"`{file_path}` line {line_start} can return unsanitized content to the browser, enabling script injection and session hijacking.",
             "path_traversal": f"`{file_path}` line {line_start} accepts user-controlled file path segments, allowing reads outside intended directories.",
-            "eval_usage": f"`{file_path}` line {line_start} uses dynamic code execution (`eval`/`Function`). This allows an attacker to execute arbitrary system-level commands or malicious logic, leading to complete host takeover.",
-            "hardcoded_credentials": f"`{file_path}` contains embedded credentials or private key material, creating immediate unauthorized access risk if repository content is exposed.",
+            "eval_usage": f"`{file_path}` line {line_start} uses dynamic code execution (`eval`/`Function`), allowing an attacker to execute arbitrary system-level commands leading to complete host takeover.",
+            "hardcoded_credentials": f"`{file_path}` contains embedded credentials or private key material, creating immediate unauthorized access risk if the repository is exposed.",
             "secret_in_code": f"`{file_path}` stores a secret directly in source control, which can be reused to access protected systems and data.",
-            "weak_jwt": f"`{file_path}` relies on weak JWT handling or outdated JWT library behavior, allowing token forgery or validation bypass.",
-            "vulnerable_dependency": f"`{package or 'dependency'}` in `package.json` is a known vulnerable component and can expose the app through published exploit paths.",
+            "weak_jwt": f"`{file_path}` relies on weak JWT handling or outdated library behavior, allowing token forgery or validation bypass.",
+            "vulnerable_dependency": f"`{package or 'dependency'}` in `package.json` is a known vulnerable component exposable through published exploit paths.",
             "committed_env_file": f"`{file_path}` is a committed environment file with real values, exposing operational secrets directly from version control.",
             "missing_security_headers": f"`{file_path}` is missing baseline security middleware/headers, increasing exploitability of client-side and framing attacks.",
             "cors_wildcard": f"`{file_path}` configures wildcard CORS, allowing untrusted origins to access sensitive API responses.",
             "missing_rate_limiting": f"`{file_path}` lacks rate limiting on sensitive paths, enabling brute-force and credential stuffing attacks.",
         }
-        return templates.get(vuln_type, f"`{file_path}` contains `{title}`, which is a security control weakness that should be remediated.")
+        return templates.get(
+            vuln_type,
+            f"`{file_path}` contains `{title}`, a security control weakness that should be remediated.",
+        )
 
     def _default_remediation_by_type(self, vuln_type: str, file_path: str, line_start: int, title: str) -> list[dict[str, Any]]:
         if vuln_type == "sql_injection":
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": f"In `{file_path}` near line {line_start}, replace raw query interpolation with parameter binding and reject unexpected input patterns.",
-                    "tradeoff": "Rapidly blocks obvious payloads but may not cover all unsafe query paths.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Refactor to ORM/query-builder parameterized APIs (`where`, replacements, bind params) and add negative tests for injection payloads.",
-                    "tradeoff": "Durable fix with moderate endpoint refactor effort.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Introduce a data-access layer banning raw SQL in handlers and enforce SAST/lint gates for SQL concatenation in CI.",
-                    "tradeoff": "Best long-term prevention; requires architecture and policy updates.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": f"In `{file_path}` near line {line_start}, replace raw query interpolation with parameter binding and reject unexpected input patterns.",
+                 "tradeoff": "Rapidly blocks obvious payloads but may not cover all unsafe query paths."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Refactor to ORM/query-builder parameterized APIs (`where`, replacements, bind params) and add negative tests for injection payloads.",
+                 "tradeoff": "Durable fix with moderate endpoint refactor effort."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Introduce a data-access layer banning raw SQL in handlers and enforce SAST/lint gates for SQL concatenation in CI.",
+                 "tradeoff": "Best long-term prevention; requires architecture and policy updates."},
             ]
         if vuln_type in {"hardcoded_credentials", "secret_in_code", "committed_env_file"}:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": f"Remove secret material from `{file_path}` and rotate any credential/key that may have been exposed.",
-                    "tradeoff": "Immediate containment; does not prevent recurrence by itself.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Load secrets from environment/secret manager and fail startup if required secrets are missing.",
-                    "tradeoff": "Secure runtime handling with moderate deployment changes.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Add secret scanning in CI and pre-commit plus push protection to block future committed secrets.",
-                    "tradeoff": "Strong prevention posture; requires team process adoption.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": f"Remove secret material from `{file_path}` and rotate any credential/key that may have been exposed.",
+                 "tradeoff": "Immediate containment; does not prevent recurrence by itself."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Load secrets from environment/secret manager and fail startup if required secrets are missing.",
+                 "tradeoff": "Secure runtime handling with moderate deployment changes."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Add secret scanning in CI and pre-commit plus push protection to block future committed secrets.",
+                 "tradeoff": "Strong prevention posture; requires team process adoption."},
             ]
         if vuln_type == "vulnerable_dependency":
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Upgrade vulnerable package to the nearest safe patch/minor version and lock via package-lock.",
-                    "tradeoff": "Fastest risk reduction but may not address transitive risk comprehensively.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Review changelog, run regression tests, and pin known-safe dependency versions for deterministic builds.",
-                    "tradeoff": "More stable upgrade with validation cost.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Implement dependency governance (scheduled updates + policy gates + CVE SLA tracking).",
-                    "tradeoff": "Reduces future CVE drift but needs ongoing ownership.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Upgrade vulnerable package to the nearest safe patch/minor version and lock via package-lock.",
+                 "tradeoff": "Fastest risk reduction but may not address transitive risk comprehensively."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Review changelog, run regression tests, and pin known-safe dependency versions for deterministic builds.",
+                 "tradeoff": "More stable upgrade with validation cost."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Implement dependency governance (scheduled updates + policy gates + CVE SLA tracking).",
+                 "tradeoff": "Reduces future CVE drift but needs ongoing ownership."},
             ]
         return [
-            {
-                "rank": 1,
-                "label": "Quick fix",
-                "time_estimate": "< 1 hour",
-                "description": f"Contain immediate risk in `{file_path}` near line {line_start}: remove unsafe pattern related to '{title}'.",
-                "tradeoff": "Rapid reduction in exposure, but may not address systemic root causes.",
-            },
-            {
-                "rank": 2,
-                "label": "Proper fix",
-                "time_estimate": "< 4 hours",
-                "description": "Refactor to secure framework patterns and add focused regression tests.",
-                "tradeoff": "Better durability and auditability with moderate engineering effort.",
-            },
-            {
-                "rank": 3,
-                "label": "Robust fix",
-                "time_estimate": "1-2 days",
-                "description": "Implement policy-level controls and CI gates to prevent recurrence.",
-                "tradeoff": "Highest long-term reduction in recurring risk with broader change scope.",
-            },
+            {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+             "description": f"Contain immediate risk in `{file_path}` near line {line_start}: remove unsafe pattern related to '{title}'.",
+             "tradeoff": "Rapid reduction in exposure, but may not address systemic root causes."},
+            {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+             "description": "Refactor to secure framework patterns and add focused regression tests.",
+             "tradeoff": "Better durability and auditability with moderate engineering effort."},
+            {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+             "description": "Implement policy-level controls and CI gates to prevent recurrence.",
+             "tradeoff": "Highest long-term reduction in recurring risk with broader change scope."},
         ]
 
     def _curated_remediations(self, finding: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -701,152 +664,74 @@ Use this exact schema:
 
         if vuln_type == "sql_injection" or "sql injection" in title:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Replace string-concatenated SQL with bound parameters immediately. In `routes/login.ts`, use Sequelize replacements (`?`/named params) and reject unexpected metacharacters in user input.",
-                    "tradeoff": "Closes injection path quickly, but input validation might remain scattered.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Refactor login query to ORM methods (`findOne` with `where`) and enforce request schema validation before query execution.",
-                    "tradeoff": "Removes manual SQL risk with moderate endpoint refactor.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Introduce a centralized data-access layer and static rules preventing raw SQL in route handlers.",
-                    "tradeoff": "Best long-term posture, requires broader code movement.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Replace string-concatenated SQL with bound parameters. Use Sequelize replacements (`?`/named params) and reject unexpected metacharacters in user input.",
+                 "tradeoff": "Closes injection path quickly, but input validation might remain scattered."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Refactor login query to ORM methods (`findOne` with `where`) and enforce request schema validation before query execution.",
+                 "tradeoff": "Removes manual SQL risk with moderate endpoint refactor."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Introduce a centralized data-access layer and static rules preventing raw SQL in route handlers.",
+                 "tradeoff": "Best long-term posture, requires broader code movement."},
             ]
-
         if vuln_type == "eval_usage" or "eval(" in title:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Remove `eval()`/`new Function()` from route logic and replace with explicit allowlisted handlers.",
-                    "tradeoff": "Immediate risk removal; may reduce dynamic behavior flexibility.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Map action names to predefined functions and validate against a strict allowlist.",
-                    "tradeoff": "Safer dispatch pattern with limited dynamic execution.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Add lint/CI rule to block `eval` usage and enforce secure dynamic behavior patterns.",
-                    "tradeoff": "Prevents recurrence across the codebase; requires policy rollout.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Remove `eval()`/`new Function()` from route logic and replace with explicit allowlisted handlers.",
+                 "tradeoff": "Immediate risk removal; may reduce dynamic behavior flexibility."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Map action names to predefined functions and validate against a strict allowlist.",
+                 "tradeoff": "Safer dispatch pattern with limited dynamic execution."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Add lint/CI rule to block `eval` usage and enforce secure dynamic behavior patterns.",
+                 "tradeoff": "Prevents recurrence across the codebase; requires policy rollout."},
             ]
-
         if vuln_type in {"secret_in_code", "hardcoded_credentials"} or "private key" in title:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Rotate exposed credentials/keys immediately and remove hardcoded secrets from source files.",
-                    "tradeoff": "Stops active exposure quickly; does not prevent reintroduction.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Load secrets from environment/secret manager and fail startup if required secrets are missing.",
-                    "tradeoff": "Secure runtime secret handling with moderate deployment changes.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Integrate secret scanning in CI, add pre-commit hooks, and enforce repository push protection.",
-                    "tradeoff": "Strong prevention posture; requires team process adoption.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Rotate exposed credentials/keys immediately and remove hardcoded secrets from source files.",
+                 "tradeoff": "Stops active exposure quickly; does not prevent reintroduction."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Load secrets from environment/secret manager and fail startup if required secrets are missing.",
+                 "tradeoff": "Secure runtime secret handling with moderate deployment changes."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Integrate secret scanning in CI, add pre-commit hooks, and enforce repository push protection.",
+                 "tradeoff": "Strong prevention posture; requires team process adoption."},
             ]
-
         if vuln_type == "weak_jwt" or "jsonwebtoken" in title or "jwt" in title:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Upgrade `jsonwebtoken` to `>=9.0.0` and enforce explicit algorithm whitelist during verify/sign.",
-                    "tradeoff": "Fast mitigation; may require token compatibility check.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Rotate JWT secrets, set short token TTLs, validate issuer/audience, and block `none` algorithm paths.",
-                    "tradeoff": "Improves auth integrity with moderate auth flow updates.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Move to centralized token service with key rotation and JWKS-based verification.",
-                    "tradeoff": "Strong long-term token hygiene; added operational complexity.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Upgrade `jsonwebtoken` to `>=9.0.0` and enforce explicit algorithm whitelist during verify/sign.",
+                 "tradeoff": "Fast mitigation; may require token compatibility check."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Rotate JWT secrets, set short token TTLs, validate issuer/audience, and block `none` algorithm paths.",
+                 "tradeoff": "Improves auth integrity with moderate auth flow updates."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Move to centralized token service with key rotation and JWKS-based verification.",
+                 "tradeoff": "Strong long-term token hygiene; added operational complexity."},
             ]
-
         if "'.env' missing from .gitignore" in title or "gitignore_env_missing" in title:
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Add `.env` and `.env.*` to `.gitignore` and verify no secret env files are tracked.",
-                    "tradeoff": "Prevents future accidental commits; does not clean existing history.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Remove tracked env files from git index and rotate any previously committed secrets.",
-                    "tradeoff": "Addresses immediate exposure with moderate operational effort.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Adopt managed secrets and enforce push-protection policies for env-style credentials.",
-                    "tradeoff": "Best prevention posture with process/tooling rollout.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Add `.env` and `.env.*` to `.gitignore` and verify no secret env files are tracked.",
+                 "tradeoff": "Prevents future accidental commits; does not clean existing history."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Remove tracked env files from git index and rotate any previously committed secrets.",
+                 "tradeoff": "Addresses immediate exposure with moderate operational effort."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Adopt managed secrets and enforce push-protection policies for env-style credentials.",
+                 "tradeoff": "Best prevention posture with process/tooling rollout."},
             ]
-
         if vuln_type == "committed_env_file" or file_path.endswith("/.env") or file_path == ".env":
             return [
-                {
-                    "rank": 1,
-                    "label": "Quick fix",
-                    "time_estimate": "< 1 hour",
-                    "description": "Delete committed `.env` from repository, rotate all contained secrets immediately, and replace with `.env.example` placeholders.",
-                    "tradeoff": "Removes direct exposure quickly but requires coordinated secret rotation.",
-                },
-                {
-                    "rank": 2,
-                    "label": "Proper fix",
-                    "time_estimate": "< 4 hours",
-                    "description": "Purge `.env` from tracked files and add secret scanning checks in CI and pre-commit.",
-                    "tradeoff": "Reduces recurrence risk with moderate setup overhead.",
-                },
-                {
-                    "rank": 3,
-                    "label": "Robust fix",
-                    "time_estimate": "1-2 days",
-                    "description": "Migrate all runtime secrets to a secret manager and enforce no-secret-in-repo policy gates.",
-                    "tradeoff": "Strongest control posture; introduces infra dependencies.",
-                },
+                {"rank": 1, "label": "Quick fix", "time_estimate": "< 1 hour",
+                 "description": "Delete committed `.env` from repository, rotate all contained secrets immediately, and replace with `.env.example` placeholders.",
+                 "tradeoff": "Removes direct exposure quickly but requires coordinated secret rotation."},
+                {"rank": 2, "label": "Proper fix", "time_estimate": "< 4 hours",
+                 "description": "Purge `.env` from tracked files and add secret scanning checks in CI and pre-commit.",
+                 "tradeoff": "Reduces recurrence risk with moderate setup overhead."},
+                {"rank": 3, "label": "Robust fix", "time_estimate": "1-2 days",
+                 "description": "Migrate all runtime secrets to a secret manager and enforce no-secret-in-repo policy gates.",
+                 "tradeoff": "Strongest control posture; introduces infra dependencies."},
             ]
-
         return None
