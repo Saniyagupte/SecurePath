@@ -321,9 +321,17 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
 
         scanner  = SecurityScanner(repo_url, scan_id, scan_progress)
         findings = scanner.run()
+        print(f"[{scan_id[:8]}] Scanner returned {len(findings)} findings: {[type(f) for f in findings[:3]]}")
 
         # Persist findings
-        insert_findings_batch(scan_id, findings)
+        try:
+            insert_findings_batch(scan_id, findings)
+            print(f"[{scan_id[:8]}] insert_findings_batch OK")
+        except Exception as e:
+            import traceback
+            print(f"[{scan_id[:8]}] INSERT FAILED: {e}")
+            traceback.print_exc()
+            raise  # re-raise so pipeline marks as failed
 
         counts = {
             s: sum(1 for f in findings if str(f.get("severity", "")) == s)
