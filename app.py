@@ -193,9 +193,11 @@ def scans_history():
 
 @app.get("/admin")
 def admin_dashboard():
-    """Password-protected admin analytics. Access via /admin?key=YOUR_PASSWORD"""
-    if request.args.get("key", "") != ADMIN_PASSWORD:
-        return "Not authorised", 403
+    return {
+        "received": repr(request.args.get("key")),
+        "env": repr(ADMIN_PASSWORD),
+        "match": request.args.get("key") == ADMIN_PASSWORD
+    }
 
     sessions  = get_all_sessions()
     total     = len(sessions)
