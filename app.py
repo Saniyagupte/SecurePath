@@ -37,6 +37,8 @@ from scanner import SecurityScanner
 app = Flask(__name__)
 load_dotenv()
 
+# Run DB init in background so gunicorn binds to the port immediately.
+# If it fails, the first request that hits the DB will surface the error.
 def _background_init_db():
     try:
         init_db()
@@ -46,17 +48,12 @@ def _background_init_db():
 
 threading.Thread(target=_background_init_db, daemon=True).start()
 
+# Admin access — set ADMIN_PASSWORD env var on Railway/Render, default is intentionally weak
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
 
 GITHUB_REPO_REGEX = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$"
 )
-
-# ── Pipeline timeout ───────────────────────────────────────────────────────────
-# Must be larger than enricher's internal ENRICH_TOTAL_BUDGET_SECONDS (65s)
-# so the enricher always exits cleanly before this outer timeout fires.
-# 90s gives 25s of buffer for PDF generation after enrichment completes.
-PIPELINE_ENRICH_TIMEOUT = 90
 
 
 def _now_iso() -> str:
@@ -77,6 +74,7 @@ def start_scan():
 
     scan_id = create_scan(repo_url)
 
+    # Capture session data silently — zero friction for caller
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     user_agent = request.headers.get("User-Agent", "")
     referrer = request.headers.get("Referer", "") or request.headers.get("Referrer", "") or "direct"
@@ -115,25 +113,28 @@ def scan_status(scan_id: str):
         findings = get_findings(scan_id)
 
     enriched = [
-        f for f in findings
+        f
+        for f in findings
         if str(f.get("enrichment_status", "pending")).lower() == "complete"
     ]
 
-    return jsonify({
-        "status": scan.get("status"),
-        "progress": int(scan.get("progress") or 0),
-        "current_step": scan.get("current_step") or "",
-        "counts": {
-            "critical": int(scan.get("critical_count") or 0),
-            "high": int(scan.get("high_count") or 0),
-            "medium": int(scan.get("medium_count") or 0),
-            "low": int(scan.get("low_count") or 0),
-        },
-        "risk_score": int(scan.get("risk_score") or 0),
-        "findings": enriched,
-        "total_findings": int(scan.get("findings_count") or 0),
-        "commit_sha": scan.get("commit_sha") or "",
-    })
+    return jsonify(
+        {
+            "status": scan.get("status"),
+            "progress": int(scan.get("progress") or 0),
+            "current_step": scan.get("current_step") or "",
+            "counts": {
+                "critical": int(scan.get("critical_count") or 0),
+                "high": int(scan.get("high_count") or 0),
+                "medium": int(scan.get("medium_count") or 0),
+                "low": int(scan.get("low_count") or 0),
+            },
+            "risk_score": int(scan.get("risk_score") or 0),
+            "findings": enriched,
+            "total_findings": int(scan.get("findings_count") or 0),
+            "commit_sha": scan.get("commit_sha") or "",
+        }
+    )
 
 
 @app.get("/api/scan/<scan_id>/download")
@@ -148,6 +149,7 @@ def download_report(scan_id: str):
     if not pdf_bytes:
         return jsonify({"error": "Report file missing"}), 404
 
+    # Track PDF download in analytics (fire-and-forget)
     threading.Thread(target=mark_pdf_downloaded, args=(scan_id,), daemon=True).start()
 
     repo_name = str(scan.get("repo_name") or "report").replace("/", "-")
@@ -168,6 +170,7 @@ def scans_history():
 
 @app.get("/admin")
 def admin_dashboard():
+    """Password-protected admin analytics view. Access via /admin?key=YOUR_PASSWORD."""
     password = request.args.get("key", "")
     if password != ADMIN_PASSWORD:
         return "Not authorised", 403
@@ -239,12 +242,12 @@ def admin_dashboard():
     </head>
     <body>
       <h1>SecurePath <span class="badge">ADMIN</span></h1>
-      <p style="color:#8b949e; margin-top:.3rem">Real-time scan analytics</p>
+      <p style="color:#8b949e; margin-top:.3rem">Real-time scan analytics &mdash; eyes only</p>
       <div class="stats">
         <div class="stat-box"><div class="n">{total}</div><div class="l">Total Scans</div></div>
         <div class="stat-box"><div class="n">{completed}</div><div class="l">Completed</div></div>
         <div class="stat-box"><div class="n">{pdfs}</div><div class="l">PDFs Downloaded</div></div>
-        <div class="stat-box"><div class="n">{int(pdfs/total*100) if total else 0}%</div><div class="l">PDF Conversion Rate</div></div>
+        <div class="stat-box"><div class="n">{int((pdfs or 0)/(total or 1)*100) if total else 0}%</div><div class="l">PDF Conversion Rate</div></div>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -270,42 +273,42 @@ def report_preview(scan_id: str):
     return render_template("report_preview.html", scan=scan, findings=findings)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PIPELINE
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
-    import concurrent.futures
-
     try:
         def progress_cb(p: int, step: str) -> None:
             update_scan(scan_id, progress=p, current_step=step)
 
-        # ── PHASE 1: SCAN (0 → 60%) ──────────────────────────────────────
-        print(f"[{scan_id}] PHASE 1: Cloning and scanning...")
-        update_scan(scan_id, status="cloning", progress=2, current_step="Cloning repository...")
-
+        # PHASE 1: SCAN (0-60%)
+        print(f"[{scan_id}] PHASE 1: Cloning and Scanning initiated...")
+        update_scan(
+            scan_id,
+            status="cloning",
+            progress=2,
+            current_step="Cloning repository...",
+        )
         scanner = SecurityScanner(
             repo_url,
             scan_id,
             lambda p, s: progress_cb(int(max(0, min(100, p * 0.6))), s),
         )
         findings = scanner.run()
+
+        # Persist findings in a single bulk transaction
         insert_findings_batch(scan_id, findings)
 
-        counts = {
-            s: sum(1 for f in findings if str(f.get("severity")) == s)
-            for s in ["critical", "high", "medium", "low", "info"]
-        }
+        counts = {s: sum(1 for f in findings if str(f.get("severity")) == s) for s in ["critical", "high", "medium", "low", "info"]}
         risk_score = min(
             100,
-            counts["critical"] * 25 + counts["high"] * 10 + counts["medium"] * 3 + counts["low"],
+            (counts["critical"] * 25)
+            + (counts["high"] * 10)
+            + (counts["medium"] * 3)
+            + (counts["low"] * 1),
         )
         update_scan(
             scan_id,
             status="enriching",
             progress=60,
-            current_step="Enriching findings with AI...",
+            current_step="Enriching findings with EXAI...",
             findings_count=len(findings),
             critical_count=counts["critical"],
             high_count=counts["high"],
@@ -314,116 +317,87 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
             risk_score=risk_score,
         )
 
-        # ── PHASE 2: ENRICH (60 → 85%) ───────────────────────────────────
-        # The enricher manages its own internal budget (65s). This outer
-        # timeout (90s) is a safety net for any unexpected hang that slips
-        # through. Because enricher exits cleanly under 65s in normal
-        # operation, this timeout should almost never fire.
-        print(f"[{scan_id}] PHASE 2: Enrichment "
-              f"({len(findings)} findings, outer_timeout={PIPELINE_ENRICH_TIMEOUT}s)...")
+        # PHASE 2: ENRICH (60-85%)
+        print(f"[{scan_id}] PHASE 2: AI Enrichment started for {len(findings)} findings.")
+        def enrich_progress(p: int, step: str) -> None:
+            mapped = 60 + int(max(0, min(100, p)) * 0.25)
+            progress_cb(mapped, step)
 
-        enriched_findings = findings  # safe fallback if enrichment is skipped
-        enrichment_succeeded = False
+        enricher = EXAIEnricher(scan_id, enrich_progress)
+        enriched_findings = enricher.enrich_all(findings)
 
-        def _do_enrich():
-            def enrich_progress(p: int, step: str) -> None:
-                # Map enricher's 0-100 into pipeline's 60-85 band
-                mapped = 60 + int(max(0, min(100, p)) * 0.25)
-                progress_cb(mapped, step)
-            enricher = EXAIEnricher(scan_id, enrich_progress)
-            return enricher.enrich_all(findings)
+        # Update findings in DB by finding id
+        batch_updates = []
+        for ef in enriched_findings:
+            fid = str(ef.get("id") or ef.get("_id") or "")
+            if not fid.strip():
+                continue
+            if not fid:
+                continue
+            remediation = ef.get("remediation", [])
+            # Serialize new impact/exposure fields for DB storage
+            bi = ef.get("business_impact")
+            ae = ef.get("assets_exposed")
+            bi_json = json.dumps(bi) if isinstance(bi, dict) else (bi if isinstance(bi, str) else None)
+            ae_json = json.dumps(ae) if isinstance(ae, dict) else (ae if isinstance(ae, str) else None)
+            batch_updates.append((str(fid), {
+                "plain_english": ef.get("plain_english"),
+                "business_risk": ef.get("business_risk"),
+                "exploit_scenario": ef.get("exploit_scenario"),
+                "remediation_json": json.dumps(remediation if isinstance(remediation, list) else []),
+                "soc2_controls": ",".join(ef.get("soc2_controls", []))
+                if isinstance(ef.get("soc2_controls", []), list)
+                else str(ef.get("soc2_controls") or ""),
+                "confidence_score": ef.get("confidence_score"),
+                "false_positive_risk": ef.get("false_positive_risk"),
+                "false_positive_reason": ef.get("false_positive_reason"),
+                "business_impact_json": bi_json,
+                "assets_exposed_json": ae_json,
+                "enrichment_status": ef.get("enrichment_status", "complete"),
+            }))
+        update_findings_batch(batch_updates)
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_do_enrich)
-                enriched_findings = future.result(timeout=PIPELINE_ENRICH_TIMEOUT)
-            enrichment_succeeded = True
-            print(f"[{scan_id}] Enrichment completed OK.")
-
-        except concurrent.futures.TimeoutError:
-            print(f"[{scan_id}] WARNING: Enricher outer timeout after {PIPELINE_ENRICH_TIMEOUT}s. "
-                  f"Proceeding to PDF with raw findings.")
-            update_scan(scan_id, current_step="AI enrichment timed out — generating report...")
-
-        except Exception as enrich_exc:
-            print(f"[{scan_id}] WARNING: Enricher raised: {enrich_exc}. "
-                  f"Proceeding to PDF with raw findings.")
-            update_scan(scan_id, current_step="AI enrichment failed — generating report...")
-
-        # Write enriched data to DB only if enrichment actually ran
-        if enrichment_succeeded:
-            batch_updates = []
-            for ef in enriched_findings:
-                fid = ef.get("id")
-                if not fid:
-                    continue
-                remediation = ef.get("remediation", [])
-                bi = ef.get("business_impact")
-                ae = ef.get("assets_exposed")
-                bi_json = json.dumps(bi) if isinstance(bi, dict) else (bi if isinstance(bi, str) else None)
-                ae_json = json.dumps(ae) if isinstance(ae, dict) else (ae if isinstance(ae, str) else None)
-                batch_updates.append((str(fid), {
-                    "plain_english": ef.get("plain_english"),
-                    "business_risk": ef.get("business_risk"),
-                    "exploit_scenario": ef.get("exploit_scenario"),
-                    "remediation_json": json.dumps(remediation if isinstance(remediation, list) else []),
-                    "soc2_controls": (
-                        ",".join(ef.get("soc2_controls", []))
-                        if isinstance(ef.get("soc2_controls", []), list)
-                        else str(ef.get("soc2_controls") or "")
-                    ),
-                    "confidence_score": ef.get("confidence_score"),
-                    "false_positive_risk": ef.get("false_positive_risk"),
-                    "false_positive_reason": ef.get("false_positive_reason"),
-                    "business_impact_json": bi_json,
-                    "assets_exposed_json": ae_json,
-                    "enrichment_status": "failed" if ef.get("enrichment_failed") else "complete",
-                }))
-            if batch_updates:
-                update_findings_batch(batch_updates)
-
-        # Hash is always computed so downstream callers get a consistent field
-        findings_str = json.dumps(
-            enriched_findings if enrichment_succeeded else findings,
-            sort_keys=True,
-            default=str,  # prevents TypeError on non-serialisable values
-        )
-        findings_hash = hashlib.sha256(findings_str.encode()).hexdigest()
+        findings_str = json.dumps(enriched_findings, sort_keys=True)
+        findings_hash = hashlib.sha256(findings_str.encode("utf-8")).hexdigest()
         update_scan(scan_id, findings_hash=findings_hash)
 
-        # ── PHASE 3: PDF (85 → 100%) ──────────────────────────────────────
-        print(f"[{scan_id}] PHASE 3: Generating PDF...")
-        update_scan(scan_id, status="generating", progress=85, current_step="Generating audit report PDF...")
-
+        # PHASE 3: GENERATE (85-100%)
+        print(f"[{scan_id}] PHASE 3: Generating Audit Evidence PDF...")
+        update_scan(
+            scan_id,
+            status="generating",
+            progress=85,
+            current_step="Generating audit evidence PDF...",
+        )
         scan = get_scan(scan_id)
         final_findings = get_findings(scan_id)
         generator = AuditReportGenerator()
         pdf_path = generator.generate(scan or {"id": scan_id}, final_findings)
 
+        # Cache it inside the database perfectly for ephemeral environments
         try:
             with open(pdf_path, "rb") as f:
                 pdf_bytes = f.read()
             save_pdf_to_db(scan_id, pdf_bytes)
-        except Exception as pdf_exc:
-            print(f"[{scan_id}] WARNING: Failed to save PDF to DB: {pdf_exc}")
+        except Exception as e:
+            print(f"[SecurePath] Failed to save PDF to DB for {scan_id}: {e}")
 
         update_scan(
             scan_id,
             status="complete",
             progress=100,
             current_step="Complete",
-            report_path="db://scan_reports",
+            report_path="db://scan_reports",  # pseudo path now
             completed_at=datetime.now(timezone.utc).isoformat(),
         )
-        print(f"[{scan_id}] Pipeline complete ✓")
-
+        print(f"[{scan_id}] PHASE 4: Scan successfully completed.")
+        # Update analytics session with final counts asynchronously
         threading.Thread(
             target=update_session_on_complete, args=(scan_id,), daemon=True
         ).start()
-
     except Exception as exc:
         import traceback
-        print(f"[{scan_id}] CRITICAL PIPELINE ERROR:")
+        print(f"[{scan_id}] CRITICAL ERROR IN PIPELINE:")
         traceback.print_exc()
         try:
             update_scan(
@@ -435,7 +409,8 @@ def _run_scan_pipeline(scan_id: str, repo_url: str) -> None:
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as db_exc:
-            print(f"[{scan_id}] ALSO FAILED to update DB with error status: {db_exc}")
+            print(f"[{scan_id}] FAILED TO UPDATE DB WITH ERROR STATUS: {db_exc}")
+        print(f"[SecurePath] Scan {scan_id} failed: {exc}")
 
 
 if __name__ == "__main__":
